@@ -11,8 +11,6 @@ async function helpCommand(sock, chatId, message) {
    YT : ${global.ytch}
 └───────────────────┈⚝
 
-*Available Commands:*
-
 *AVAILABLE COMMANDS*
 
 ┌── ❮ 🌐 ɢᴇɴᴇʀᴀʟ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
