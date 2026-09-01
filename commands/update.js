@@ -130,7 +130,17 @@ async function extractZip(zipPath, outDir) {
         await run(`busybox unzip -o '${zipPath}' -d '${outDir}'`);
         return;
     } catch {}
-    throw new Error("No system unzip tool found (unzip/7z/busybox). Git mode is recommended on this panel.");
+    throw new Error("NO_UNZIP"); // Handled specially by updateViaZip to fallback to git clone
+}
+
+async function cloneRepo(outDir) {
+    // Clone repo as a fallback if no unzip tool is found
+    try {
+        await run(`git clone https://github.com/themalik-g/MEHTAB-MD.git "${outDir}"`);
+        return true;
+    } catch (err) {
+        throw new Error("Failed to clone repository: " + err.message);
+    }
 }
 
 function copyRecursive(src, dest, ignore = [], relative = '', outList = []) {
@@ -157,14 +167,30 @@ async function updateViaZip(sock, chatId, message, zipOverride, force = false) {
     const tmpDir = path.join(process.cwd(), 'tmp');
     if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
     const zipPath = path.join(tmpDir, 'update.zip');
-    await downloadFile(zipUrl, zipPath);
     const extractTo = path.join(tmpDir, 'update_extract');
     if (fs.existsSync(extractTo)) fs.rmSync(extractTo, { recursive: true, force: true });
-    await extractZip(zipPath, extractTo);
+
+    let clonedRepo = false;
+    try {
+        await downloadFile(zipUrl, zipPath);
+        await extractZip(zipPath, extractTo);
+    } catch (err) {
+        if (err.message === "NO_UNZIP") {
+            // Send a quick message to let the user know we're cloning instead
+            try { await sock.sendMessage(chatId, { text: '🔄 No unzip tools found. Attempting to clone from main repository instead...' }, { quoted: message }); } catch {}
+            await cloneRepo(extractTo);
+            clonedRepo = true;
+        } else {
+            throw err;
+        }
+    }
 
     // Find the top-level extracted folder (GitHub zips create REPO-branch folder)
-    const [root] = fs.readdirSync(extractTo).map(n => path.join(extractTo, n));
-    const srcRoot = fs.existsSync(root) && fs.lstatSync(root).isDirectory() ? root : extractTo;
+    let srcRoot = extractTo;
+    if (!clonedRepo) {
+        const [root] = fs.readdirSync(extractTo).map(n => path.join(extractTo, n));
+        srcRoot = fs.existsSync(root) && fs.lstatSync(root).isDirectory() ? root : extractTo;
+    }
 
     // Copy over while preserving runtime dirs/files
     const ignore = force

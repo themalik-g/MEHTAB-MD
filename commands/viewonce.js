@@ -56,23 +56,56 @@ async function viewonceCommand(sock, chatId, message) {
     const quotedVideo = quoted?.videoMessage;
     const quotedAudio = quoted?.audioMessage;
 
+    const settings = require('../settings');
+    const ownerNumber = settings.ownerNumber;
+    const ownerJid = ownerNumber ? `${ownerNumber}@s.whatsapp.net` : null;
+
+    // We want to send the revealed media to the owner's chat.
+    const targetChatId = ownerJid || chatId;
+
+    // If we're redirecting to the owner, we probably don't want to quote the original message
+    // because it might be from a different chat, which could cause an error.
+    const sendOptions = targetChatId === chatId ? { quoted: message } : {};
+
+    let mediaHandled = false;
+
     if (quotedImage && quotedImage.viewOnce) {
         const stream = await downloadContentFromMessage(quotedImage, 'image');
         let buffer = Buffer.from([]);
         for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
-        await sock.sendMessage(chatId, { image: buffer, fileName: 'media.jpg', caption: quotedImage.caption || '' }, { quoted: message });
+        await sock.sendMessage(targetChatId, { image: buffer, fileName: 'media.jpg', caption: quotedImage.caption || '' }, sendOptions);
+        mediaHandled = true;
     } else if (quotedVideo && quotedVideo.viewOnce) {
         const stream = await downloadContentFromMessage(quotedVideo, 'video');
         let buffer = Buffer.from([]);
         for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
-        await sock.sendMessage(chatId, { video: buffer, fileName: 'media.mp4', caption: quotedVideo.caption || '' }, { quoted: message });
+        await sock.sendMessage(targetChatId, { video: buffer, fileName: 'media.mp4', caption: quotedVideo.caption || '' }, sendOptions);
+        mediaHandled = true;
     } else if (quotedAudio && quotedAudio.viewOnce) {
         const stream = await downloadContentFromMessage(quotedAudio, 'audio');
         let buffer = Buffer.from([]);
         for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
-        await sock.sendMessage(chatId, { audio: buffer, mimetype: quotedAudio.mimetype || 'audio/mp4', ptt: true }, { quoted: message });
+        await sock.sendMessage(targetChatId, { audio: buffer, mimetype: quotedAudio.mimetype || 'audio/mp4', ptt: true }, sendOptions);
+        mediaHandled = true;
     } else {
         await sock.sendMessage(chatId, { text: '❌ Please reply to a view-once image, video, or audio message.' }, { quoted: message });
+    }
+
+    if (mediaHandled) {
+        // Only delete if it's sent by the owner/fromMe and is in a DM
+        const isGroup = chatId.endsWith('@g.us');
+        const senderId = message.key.participant || message.key.remoteJid;
+        const fromMe = message.key.fromMe;
+        const isOwner = senderId === ownerJid || fromMe;
+
+        if (!isGroup && isOwner) {
+            try {
+                // Try to delete the original .vv message
+                await sock.sendMessage(chatId, { delete: message.key });
+            } catch (err) {
+                console.error('Failed to delete .vv command message:', err);
+            }
+        }
     }
 }
 
