@@ -155,7 +155,7 @@ const channelInfo = {
         forwardingScore: 1,
         isForwarded: true,
         forwardedNewsletterMessageInfo: {
-            newsletterJid: '120363161513685998@newsletter',
+            newsletterJid: '120363409689492071@newsletter',
             newsletterName: 'MEHTAB-MD',
             serverMessageId: -1
         }
