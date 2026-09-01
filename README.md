@@ -16,10 +16,11 @@ This is a WhatsApp bot built using the Baileys library for group management, inc
 
 <div align="center">
   <img src="https://img.shields.io/github/followers/themalik-g?style=for-the-badge&label=Followers" alt="Followers"/>
-  <img src="https://img.shields.io/github/stars/themalik-g/MEHTAB-MD.git?style=for-the-badge&label=Stars" alt="Stars"/>
-  <img src="https://img.shields.io/github/forks/themalik-g/MEHTAB-MD.git?style=for-the-badge&label=Forks" alt="Forks"/>
-  <img src="https://img.shields.io/github/watchers/themalik-g/MEHTAB-MD.git?style=for-the-badge&label=Watchers" alt="Watchers"/>
+  <img src="https://shields.io" alt="Stars"/>
+  <img src="https://img.shields.io/github/forks/themalik-g/MEHTAB-MD?style=for-the-badge&label=Forks" alt="Forks"/>
+  <img src="https://img.shields.io/github/watchers/themalik-g/MEHTAB-MD?style=for-the-badge&label=Watchers" alt="Watchers"/>
 </div>
+
 
 ---
 
