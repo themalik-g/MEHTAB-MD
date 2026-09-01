@@ -76,73 +76,7 @@ async function viewonceCommand(sock, chatId, message) {
     }
 }
 
-/**
- * Intercepts incoming viewOnce messages automatically
- */
-async function handleAutoViewOnce(sock, msg) {
-    try {
-        const config = readConfig();
-        if (!config.enabled) return;
-
-        if (!msg?.message) return;
-
-        let messageContent = msg.message;
-        if (messageContent.ephemeralMessage) {
-            messageContent = messageContent.ephemeralMessage.message;
-        }
-
-        const viewOnceMessage = messageContent.viewOnceMessageV2?.message || messageContent.viewOnceMessage?.message;
-        if (!viewOnceMessage) return;
-
-        const chatId = msg.key.remoteJid;
-        const sender = msg.key.participant || msg.participant || chatId;
-        const senderName = sender.split('@')[0];
-
-        const imageMsg = viewOnceMessage.imageMessage;
-        const videoMsg = viewOnceMessage.videoMessage;
-        const audioMsg = viewOnceMessage.audioMessage;
-
-        const caption = `*👁️ AUTO ANTI-VIEWONCE DETECTED*\n👤 *Sender:* @${senderName}`;
-
-        if (imageMsg) {
-            const stream = await downloadContentFromMessage(imageMsg, 'image');
-            let buffer = Buffer.from([]);
-            for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
-            await sock.sendMessage(chatId, {
-                image: buffer,
-                caption: imageMsg.caption ? `${caption}\n📝 *Caption:* ${imageMsg.caption}` : caption,
-                mentions: [sender]
-            }, { quoted: msg });
-        } else if (videoMsg) {
-            const stream = await downloadContentFromMessage(videoMsg, 'video');
-            let buffer = Buffer.from([]);
-            for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
-            await sock.sendMessage(chatId, {
-                video: buffer,
-                caption: videoMsg.caption ? `${caption}\n📝 *Caption:* ${videoMsg.caption}` : caption,
-                mentions: [sender]
-            }, { quoted: msg });
-        } else if (audioMsg) {
-            const stream = await downloadContentFromMessage(audioMsg, 'audio');
-            let buffer = Buffer.from([]);
-            for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
-            await sock.sendMessage(chatId, {
-                text: `${caption}\n🎵 *ViewOnce Voice/Audio below:*`,
-                mentions: [sender]
-            }, { quoted: msg });
-            await sock.sendMessage(chatId, {
-                audio: buffer,
-                mimetype: audioMsg.mimetype || 'audio/mp4',
-                ptt: true
-            });
-        }
-    } catch (err) {
-        console.error('handleAutoViewOnce error:', err);
-    }
-}
-
 module.exports = {
     viewonceCommand,
-    antiViewOnceCommand,
-    handleAutoViewOnce
+    antiViewOnceCommand
 };
