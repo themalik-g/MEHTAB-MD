@@ -144,34 +144,63 @@ async function handleAntiVV(sock, message) {
         const senderName = sender.split('@')[0];
         const captionPrefix = `*👁️ ANTIVIEWONCE DETECTED 👁️*\n*From:* @${senderName}\n\n`;
 
-        if (imgMsg) {
-            const buffer = await toBuffer(await downloadContentFromMessage(imgMsg, 'image'));
-            await sock.sendMessage(targetJid, {
-                image: buffer,
-                caption: captionPrefix + (imgMsg.caption || ''),
-                mentions: [sender]
-            });
-        } else if (videoMsg) {
-            const buffer = await toBuffer(await downloadContentFromMessage(videoMsg, 'video'));
-            await sock.sendMessage(targetJid, {
-                video: buffer,
-                caption: captionPrefix + (videoMsg.caption || ''),
-                mentions: [sender]
-            });
-        } else if (audioMsg) {
-            const buffer = await toBuffer(await downloadContentFromMessage(audioMsg, 'audio'));
-            await sock.sendMessage(targetJid, {
-                text: captionPrefix.trim(),
-                mentions: [sender]
-            });
-            await sock.sendMessage(targetJid, {
-                audio: buffer,
-                mimetype: audioMsg.mimetype || 'audio/mp4',
-                ptt: audioMsg.ptt || false
-            });
+        try {
+            if (imgMsg) {
+                const stripped = { imageMessage: { ...imgMsg, viewOnce: false } };
+                if (stripped.imageMessage.caption) {
+                    stripped.imageMessage.caption = captionPrefix + stripped.imageMessage.caption;
+                } else {
+                    stripped.imageMessage.caption = captionPrefix.trim();
+                }
+                await sock.sendMessage(targetJid, { forward: { key: message.key, message: stripped } });
+            } else if (videoMsg) {
+                const stripped = { videoMessage: { ...videoMsg, viewOnce: false } };
+                if (stripped.videoMessage.caption) {
+                    stripped.videoMessage.caption = captionPrefix + stripped.videoMessage.caption;
+                } else {
+                    stripped.videoMessage.caption = captionPrefix.trim();
+                }
+                await sock.sendMessage(targetJid, { forward: { key: message.key, message: stripped } });
+            } else if (audioMsg) {
+                const stripped = { audioMessage: { ...audioMsg, viewOnce: false } };
+                await sock.sendMessage(targetJid, { forward: { key: message.key, message: stripped } });
+                await sock.sendMessage(targetJid, {
+                    text: captionPrefix.trim(),
+                    mentions: [sender]
+                });
+            }
+        } catch (forwardError) {
+            console.error('Forward approach failed in AntiVV, falling back to downloadMediaMessage', forwardError);
+            const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+            if (imgMsg) {
+                const buffer = await downloadMediaMessage(message, 'buffer', {});
+                await sock.sendMessage(targetJid, {
+                    image: buffer,
+                    caption: captionPrefix + (imgMsg.caption || ''),
+                    mentions: [sender]
+                });
+            } else if (videoMsg) {
+                const buffer = await downloadMediaMessage(message, 'buffer', {});
+                await sock.sendMessage(targetJid, {
+                    video: buffer,
+                    caption: captionPrefix + (videoMsg.caption || ''),
+                    mentions: [sender]
+                });
+            } else if (audioMsg) {
+                const buffer = await downloadMediaMessage(message, 'buffer', {});
+                await sock.sendMessage(targetJid, {
+                    text: captionPrefix.trim(),
+                    mentions: [sender]
+                });
+                await sock.sendMessage(targetJid, {
+                    audio: buffer,
+                    mimetype: audioMsg.mimetype || 'audio/mp4',
+                    ptt: audioMsg.ptt || false
+                });
+            }
         }
     } catch (error) {
-        console.error('Error in handleAntiVV:', error);
+        console.error('Error in handleAntiVV:', error.stack || error);
     }
 }
 
