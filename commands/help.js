@@ -81,6 +81,9 @@ async function helpCommand(sock, chatId, message) {
 │ ◈ .antivv <g/p/jid/off> [scope]
 │ ◈ .cleartmp
 │ ◈ .update
+│ ◈ .update now (full resync)
+│ ◈ .save (reply to a status)
+│ ◈ .readstatus [emoji]
 │ ◈ .settings
 │ ◈ .setpp <reply to image>
 │ ◈ .autoreact <on/off>

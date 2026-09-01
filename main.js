@@ -147,6 +147,9 @@ const { antiEditCommand, handleAntiEdit, handleAntiEditUpdate, storeMessageConte
 const { getProtocolMessage } = require('./lib/msgcontent');
 const movieCommand = require('./commands/movie');
 const qrCommand = require('./commands/qr');
+const saveCommand = require('./commands/save');
+const readStatusCommand = require('./commands/readstatus');
+const { rememberStatus } = require('./commands/statusstore');
 const { alwaysOnlineCommand } = require('./commands/alwaysonline');
 const { getOnlineCommand } = require('./commands/getonline');
 const learnCommand = require('./commands/learn');
@@ -316,7 +319,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const adminCommands = ['.mute', '.unmute', '.ban', '.unban', '.promote', '.demote', '.kick', '.tagall', '.tagnotadmin', '.hidetag', '.antilink', '.antitag', '.setgdesc', '.setgname', '.setgpp'];
         const isAdminCommand = adminCommands.some(cmd => userMessage.startsWith(cmd));
 
-        const ownerCommands = ['.mode', '.autostatus', '.antidelete', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.antivv', '.antiviewonce', '.antiedit', '.alwaysonline', '.always-online', '.getonline', '.get-online'];
+        const ownerCommands = ['.updatenow', '.save', '.readstatus', '.mode', '.autostatus', '.antidelete', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.antivv', '.antiviewonce', '.antiedit', '.alwaysonline', '.always-online', '.getonline', '.get-online'];
         const isOwnerCommand = ownerCommands.some(cmd => userMessage.startsWith(cmd));
 
         let isSenderAdmin = false;
@@ -1116,7 +1119,19 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 {
                     const parts = rawText.trim().split(/\s+/);
                     const zipArg = parts[1] && parts[1].startsWith('http') ? parts[1] : '';
-                    await updateCommand(sock, chatId, message, zipArg);
+                    const force = /^\.updatenow$/i.test(parts[0]) || ['now', 'force'].includes((parts[1] || '').toLowerCase());
+                    await updateCommand(sock, chatId, message, zipArg, force);
+                }
+                commandExecuted = true;
+                break;
+            case userMessage === '.save' || userMessage === '.sv':
+                await saveCommand(sock, chatId, message);
+                commandExecuted = true;
+                break;
+            case userMessage.startsWith('.readstatus') || userMessage.startsWith('.readstatuses') || userMessage.startsWith('.rs'):
+                {
+                    const args = rawText.trim().split(/\s+/).slice(1);
+                    await readStatusCommand(sock, chatId, message, args);
                 }
                 commandExecuted = true;
                 break;
@@ -1273,6 +1288,10 @@ module.exports = {
     handleMessageUpdates,
     handleGroupParticipantUpdate,
     handleStatus: async (sock, status) => {
+        for (const statusMessage of status?.messages || []) {
+            rememberStatus(statusMessage);
+        }
+        if (status?.key) rememberStatus(status);
         await handleStatusUpdate(sock, status);
     }
 };
