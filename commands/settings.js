@@ -30,6 +30,8 @@ async function settingsCommand(sock, chatId, message) {
         const autotyping = readJsonSafe(`${dataDir}/autotyping.json`, { enabled: false });
         const pmblocker = readJsonSafe(`${dataDir}/pmblocker.json`, { enabled: false });
         const anticall = readJsonSafe(`${dataDir}/anticall.json`, { enabled: false });
+        const antivv = readJsonSafe(`${dataDir}/antivv.json`, { value: null });
+        const antiedit = readJsonSafe(`${dataDir}/antiedit.json`, { value: null });
         const userGroupData = readJsonSafe(`${dataDir}/userGroupData.json`, {
             antilink: {}, antibadword: {}, welcome: {}, goodbye: {}, chatbot: {}, antitag: {}
         });
@@ -53,6 +55,8 @@ async function settingsCommand(sock, chatId, message) {
         lines.push(`• Autotyping: ${autotyping.enabled ? 'ON' : 'OFF'}`);
         lines.push(`• PM Blocker: ${pmblocker.enabled ? 'ON' : 'OFF'}`);
         lines.push(`• Anticall: ${anticall.enabled ? 'ON' : 'OFF'}`);
+        lines.push(`• Anti ViewOnce: ${antivv.value ? antivv.value : 'OFF'}`);
+        lines.push(`• Anti Edit: ${antiedit.value ? antiedit.value : 'OFF'}`);
         lines.push(`• Auto Reaction: ${autoReaction ? 'ON' : 'OFF'}`);
         if (groupId) {
             lines.push('');

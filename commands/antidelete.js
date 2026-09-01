@@ -15,16 +15,13 @@ const MAX_MESSAGES = 2000;
 function readConfig() {
     try {
         if (!fs.existsSync(configPath)) {
-            const defaultConfig = { enabled: true, sendTo: 'chat', antiedit: true, antieditSendTo: 'owner' };
+            const defaultConfig = { enabled: true, sendTo: 'chat' };
             fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
             return defaultConfig;
         }
-        const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        if (data.antiedit === undefined) data.antiedit = true;
-        if (!data.antieditSendTo) data.antieditSendTo = 'owner';
-        return data;
+        return JSON.parse(fs.readFileSync(configPath, 'utf8'));
     } catch (e) {
-        return { enabled: true, sendTo: 'chat', antiedit: true, antieditSendTo: 'owner' };
+        return { enabled: true, sendTo: 'chat' };
     }
 }
 
@@ -232,64 +229,6 @@ async function handleMessageRevocation(sock, revocationMessage) {
             return;
         }
 
-        // TYPE 14 / MESSAGE_EDIT: EDIT DETECTED
-        if (protocolMsg.type === 14 || protocolMsg.type === 'MESSAGE_EDIT' || protocolMsg.editedMessage) {
-            if (!config.antiedit) return;
-
-            const original = messageStore.get(messageId);
-            const editedContentMsg = protocolMsg.editedMessage;
-
-            let newText = '';
-            if (editedContentMsg) {
-                const type = getContentType(editedContentMsg);
-                if (type === 'conversation') newText = editedContentMsg.conversation;
-                else if (type === 'extendedTextMessage') newText = editedContentMsg.extendedTextMessage.text;
-                else if (editedContentMsg.imageMessage) newText = editedContentMsg.imageMessage.caption || '[Image]';
-                else if (editedContentMsg.videoMessage) newText = editedContentMsg.videoMessage.caption || '[Video]';
-            }
-
-            const remoteJid = revocationMessage.key.remoteJid;
-            const editor = revocationMessage.key.participant || revocationMessage.participant || remoteJid;
-            const sender = original?.sender || editor;
-
-            let groupName = '';
-            if (remoteJid.endsWith('@g.us')) {
-                try {
-                    const groupMetadata = await sock.groupMetadata(remoteJid);
-                    groupName = groupMetadata.subject;
-                } catch (e) {
-                    groupName = 'Group Chat';
-                }
-            }
-
-            const time = new Date().toLocaleString('en-US', {
-                timeZone: 'Asia/Kolkata',
-                hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit',
-                day: '2-digit', month: '2-digit', year: 'numeric'
-            });
-
-            let text = `*✏️ ANTI-EDIT REPORT ✏️*\n\n` +
-                `*👤 Edited By:* @${editor.split('@')[0]}\n` +
-                `*🕒 Time:* ${time}\n`;
-
-            if (groupName) text += `*👥 Group:* ${groupName}\n`;
-
-            text += `\n*📝 Original Message:*\n${original?.content || '*(Original message not found in cache)*'}\n\n`;
-            text += `*🆕 Edited Message:*\n${newText || '*(New text unavailable)*'}`;
-
-            const targetJid = config.antieditSendTo === 'owner' ? botNumber : remoteJid;
-
-            await sock.sendMessage(targetJid, {
-                text,
-                mentions: [editor]
-            });
-
-            // Update cached message content with new text
-            if (original) {
-                original.content = newText;
-                messageStore.set(messageId, original);
-            }
-        }
     } catch (err) {
         console.error('handleMessageRevocation error:', err);
     }
@@ -337,56 +276,13 @@ async function handleAntideleteCommand(sock, chatId, message, args) {
     }
 }
 
-/**
- * Command Handler for .antiedit
- */
-async function handleAntieditCommand(sock, chatId, message, args) {
-    const action = args[0]?.toLowerCase();
-    const config = readConfig();
-
-    if (action === 'on' || action === 'enable') {
-        config.antiedit = true;
-        saveConfig(config);
-        return sock.sendMessage(chatId, { text: '✅ *Anti-Edit has been ENABLED.* Edited messages will now be caught.' }, { quoted: message });
-    } else if (action === 'off' || action === 'disable') {
-        config.antiedit = false;
-        saveConfig(config);
-        return sock.sendMessage(chatId, { text: '❌ *Anti-Edit has been DISABLED.*' }, { quoted: message });
-    } else if (action === 'to' || action === 'mode') {
-        const mode = args[1]?.toLowerCase();
-        if (mode === 'chat' || mode === 'group') {
-            config.antieditSendTo = 'chat';
-            saveConfig(config);
-            return sock.sendMessage(chatId, { text: '✅ Edit reports will now be sent to the *chat/group*.' }, { quoted: message });
-        } else if (mode === 'owner' || mode === 'dm') {
-            config.antieditSendTo = 'owner';
-            saveConfig(config);
-            return sock.sendMessage(chatId, { text: '✅ Edit reports will now be sent to *Owner DM*.' }, { quoted: message });
-        } else {
-            return sock.sendMessage(chatId, { text: '⚠️ Use: `.antiedit to chat` or `.antiedit to owner`' }, { quoted: message });
-        }
-    } else {
-        return sock.sendMessage(chatId, {
-            text: `*───『 ✏️ ANTI-EDIT SETTINGS ✏️ 』───*\n\n` +
-                  `*• Status:* ${config.antiedit ? '🟢 ENABLED' : '🔴 DISABLED'}\n` +
-                  `*• Destination:* ${config.antieditSendTo === 'owner' ? '👤 Owner DM' : '👥 Current Chat'}\n\n` +
-                  `*Commands:*\n` +
-                  `• \`.antiedit on\` - Activate anti-edit\n` +
-                  `• \`.antiedit off\` - Deactivate anti-edit\n` +
-                  `• \`.antiedit to chat\` - Send edit report in current chat\n` +
-                  `• \`.antiedit to owner\` - Send edit report to owner DM`
-        }, { quoted: message });
-    }
-}
-
 module.exports = {
     name: 'antidelete',
-    alias: ['antidel', 'antirevoke', 'antiedit'],
+    alias: ['antidel', 'antirevoke'],
     category: 'group',
-    desc: 'Capture and recover deleted or edited messages',
+    desc: 'Capture and recover deleted messages',
     execute: handleAntideleteCommand,
     handleAntideleteCommand,
-    handleAntieditCommand,
     handleMessageRevocation,
     storeMessage
 };
