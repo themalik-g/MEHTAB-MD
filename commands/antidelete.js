@@ -264,7 +264,7 @@ async function handleAntideleteCommand(sock, chatId, message, args) {
         }
     } else {
         return sock.sendMessage(chatId, {
-            text: `*───『 🔰 ANTIDELETE SETTINGS 🔰 』───*\n\n` +
+            text: `*🔰 ANTIDELETE SETTINGS 🔰*\n\n` +
                   `*• Status:* ${config.enabled ? '🟢 ENABLED' : '🔴 DISABLED'}\n` +
                   `*• Destination:* ${config.sendTo === 'owner' ? '👤 Owner DM' : '👥 Current Chat'}\n\n` +
                   `*Commands:*\n` +
