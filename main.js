@@ -101,16 +101,17 @@ const unbanCommand = require('./commands/unban');
 const emojimixCommand = require('./commands/emojimix');
 const { handlePromotionEvent } = require('./commands/promote');
 const { handleDemotionEvent } = require('./commands/demote');
-const viewOnceCommand = require('./commands/viewonce');
+const { viewonceCommand, antiViewOnceCommand, handleAutoViewOnce } = require('./commands/viewonce');
 const clearSessionCommand = require('./commands/clearsession');
 const { autoStatusCommand, handleStatusUpdate } = require('./commands/autostatus');
 const { simpCommand } = require('./commands/simp');
 const { stupidCommand } = require('./commands/stupid');
 const stickerTelegramCommand = require('./commands/stickertelegram');
 const textmakerCommand = require('./commands/textmaker');
-const { handleAntideleteCommand, handleMessageRevocation, storeMessage } = require('./commands/antidelete');
+const { handleAntideleteCommand, handleAntieditCommand, handleMessageRevocation, storeMessage } = require('./commands/antidelete');
 const clearTmpCommand = require('./commands/cleartmp');
 const setProfilePicture = require('./commands/setpp');
+const getppCommand = require('./commands/getpp');
 const { setGroupDescription, setGroupName, setGroupPhoto } = require('./commands/groupmanage');
 const instagramCommand = require('./commands/instagram');
 const facebookCommand = require('./commands/facebook');
@@ -171,13 +172,16 @@ async function handleMessages(sock, messageUpdate, printLog) {
         // Handle autoread functionality
         await handleAutoread(sock, message);
 
-        // Store message for antidelete feature
+        // Auto Anti-ViewOnce interception
+        await handleAutoViewOnce(sock, message);
+
+        // Store message for antidelete & antiedit features
         if (message.message) {
             await storeMessage(sock, message);
         }
 
-        // Handle message revocation (Anti-Delete)
-        if (message.message?.protocolMessage?.type === 0 || message.message?.protocolMessage) {
+        // Handle message revocation / edits (Anti-Delete & Anti-Edit)
+        if (message.message?.protocolMessage) {
             await handleMessageRevocation(sock, message);
             return;
         }
@@ -296,7 +300,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const adminCommands = ['.mute', '.unmute', '.ban', '.unban', '.promote', '.demote', '.kick', '.tagall', '.tagnotadmin', '.hidetag', '.antilink', '.antitag', '.setgdesc', '.setgname', '.setgpp'];
         const isAdminCommand = adminCommands.some(cmd => userMessage.startsWith(cmd));
 
-        const ownerCommands = ['.mode', '.autostatus', '.antidelete', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker'];
+        const ownerCommands = ['.mode', '.autostatus', '.antidelete', '.antiedit', '.antiviewonce', '.antivv', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker'];
         const isOwnerCommand = ownerCommands.some(cmd => userMessage.startsWith(cmd));
 
         let isSenderAdmin = false;
@@ -767,8 +771,12 @@ async function handleMessages(sock, messageUpdate, printLog) {
             case userMessage.startsWith('.tg') || userMessage.startsWith('.stickertelegram') || userMessage.startsWith('.tgsticker') || userMessage.startsWith('.telesticker'):
                 await stickerTelegramCommand(sock, chatId, message);
                 break;
-            case userMessage === '.vv':
-                await viewOnceCommand(sock, chatId, message);
+            case userMessage === '.vv' || userMessage === '.viewonce':
+                await viewonceCommand(sock, chatId, message);
+                break;
+            case userMessage.startsWith('.antiviewonce') || userMessage.startsWith('.antivv'):
+                const antiVvArgs = userMessage.split(' ').slice(1);
+                await antiViewOnceCommand(sock, chatId, message, antiVvArgs);
                 break;
             case userMessage === '.clearsession' || userMessage === '.clearsesi':
                 await clearSessionCommand(sock, chatId, message);
@@ -832,8 +840,12 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 await textmakerCommand(sock, chatId, message, userMessage, 'fire');
                 break;
             case userMessage.startsWith('.antidelete') || userMessage.startsWith('.antidel'):
-                const antideleteMatch = userMessage.replace(/^\.(antidelete|antidel)/i, '').trim();
+                const antideleteMatch = userMessage.replace(/^\.(antidelete|antidel)/i, '').trim().split(/\s+/);
                 await handleAntideleteCommand(sock, chatId, message, antideleteMatch);
+                break;
+            case userMessage.startsWith('.antiedit'):
+                const antieditMatch = userMessage.replace(/^\.antiedit/i, '').trim().split(/\s+/);
+                await handleAntieditCommand(sock, chatId, message, antieditMatch);
                 break;
             case userMessage === '.surrender':
                 await handleTicTacToeMove(sock, chatId, senderId, 'surrender');
@@ -843,6 +855,10 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 break;
             case userMessage === '.setpp':
                 await setProfilePicture(sock, chatId, message);
+                break;
+            case userMessage.startsWith('.getpp') || userMessage.startsWith('.getpic') || userMessage.startsWith('.profilepic'):
+                const getppArgs = userMessage.split(' ').slice(1);
+                await getppCommand(sock, chatId, message, getppArgs);
                 break;
             case userMessage.startsWith('.setgdesc'):
                 {

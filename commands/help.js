@@ -30,7 +30,8 @@ async function helpCommand(sock, chatId, message) {
 ║ ➤ .8ball <question>
 ║ ➤ .groupinfo
 ║ ➤ .staff or .admins 
-║ ➤ .vv
+║ ➤ .vv or .viewonce
+║ ➤ .getpp @user
 ║ ➤ .trt <text> <lang>
 ║ ➤ .ss <link>
 ║ ➤ .jid
@@ -69,7 +70,9 @@ async function helpCommand(sock, chatId, message) {
 🔒 *Owner Commands*:
 ║ ➤ .mode <public/private>
 ║ ➤ .clearsession
-║ ➤ .antidelete
+║ ➤ .antidelete <on/off/to chat/to owner>
+║ ➤ .antiedit <on/off/to chat/to owner>
+║ ➤ .antiviewonce <on/off>
 ║ ➤ .cleartmp
 ║ ➤ .update
 ║ ➤ .settings
@@ -77,6 +80,7 @@ async function helpCommand(sock, chatId, message) {
 ║ ➤ .autoreact <on/off>
 ║ ➤ .autostatus <on/off>
 ║ ➤ .autostatus react <on/off>
+║ ➤ .autostatus emoji <emoji>
 ║ ➤ .autotyping <on/off>
 ║ ➤ .autoread <on/off>
 ║ ➤ .anticall <on/off>
