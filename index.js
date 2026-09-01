@@ -282,14 +282,20 @@ async function startXeonBotInc() {
             if (global.alwaysOnlineInterval) clearInterval(global.alwaysOnlineInterval);
             global.alwaysOnlineInterval = setInterval(async () => {
                 try {
-                    if (isAlwaysOnlineEnabled() && XeonBotInc?.user) {
-                        await XeonBotInc.sendPresenceUpdate('available');
+                    if (XeonBotInc?.user) {
+                        if (isAlwaysOnlineEnabled()) {
+                            await XeonBotInc.sendPresenceUpdate('available');
+                        } else {
+                            await XeonBotInc.sendPresenceUpdate('unavailable');
+                        }
                     }
                 } catch (e) {}
             }, 20000);
             try {
                 if (isAlwaysOnlineEnabled()) {
                     await XeonBotInc.sendPresenceUpdate('available');
+                } else {
+                    await XeonBotInc.sendPresenceUpdate('unavailable');
                 }
             } catch (e) {}
 
