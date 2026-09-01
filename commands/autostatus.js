@@ -25,6 +25,9 @@ function readConfig() {
             return defaultConfig;
         }
         const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        // Ensure defaults are populated if missing
+        if (typeof config.enabled !== 'boolean') config.enabled = false;
+        if (typeof config.reactOn !== 'boolean') config.reactOn = false;
         if (!config.emoji) config.emoji = '💚';
         return config;
     } catch (e) {
@@ -166,22 +169,13 @@ async function sendStatusReaction(sock, statusKey, emoji) {
     try {
         const reactionEmoji = emoji || getStatusReactionEmoji();
 
-        await sock.relayMessage(
-            'status@broadcast',
+        await sock.sendMessage(
+            statusKey.participant || statusKey.remoteJid,
             {
-                reactionMessage: {
-                    key: {
-                        remoteJid: 'status@broadcast',
-                        id: statusKey.id,
-                        participant: statusKey.participant || statusKey.remoteJid,
-                        fromMe: false
-                    },
-                    text: reactionEmoji
+                react: {
+                    text: reactionEmoji,
+                    key: statusKey
                 }
-            },
-            {
-                messageId: statusKey.id,
-                statusJidList: [statusKey.remoteJid, statusKey.participant || statusKey.remoteJid]
             }
         );
     } catch (error) {

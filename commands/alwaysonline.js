@@ -47,11 +47,15 @@ async function alwaysOnlineCommand(sock, chatId, message, args) {
 
         fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 
-        if (config.enabled && sock.user) {
+        if (sock.user) {
             try {
-                await sock.sendPresenceUpdate('available');
+                if (config.enabled) {
+                    await sock.sendPresenceUpdate('available');
+                } else {
+                    await sock.sendPresenceUpdate('unavailable');
+                }
             } catch (e) {
-                console.error('Error updating presence on enable:', e);
+                console.error('Error updating presence:', e);
             }
         }
 
