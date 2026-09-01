@@ -161,12 +161,10 @@ function getStatusReactionEmoji() {
     return readConfig().emoji || '💚';
 }
 
-// Function to react to status using proper method
-async function reactToStatus(sock, statusKey) {
+// Reacts regardless of the auto-reaction toggle, used by manual commands
+async function sendStatusReaction(sock, statusKey, emoji) {
     try {
-        if (!isStatusReactionEnabled()) return;
-
-        const reactionEmoji = getStatusReactionEmoji();
+        const reactionEmoji = emoji || getStatusReactionEmoji();
 
         await sock.relayMessage(
             'status@broadcast',
@@ -189,6 +187,11 @@ async function reactToStatus(sock, statusKey) {
     } catch (error) {
         console.error('❌ Error reacting to status:', error.message);
     }
+}
+
+async function reactToStatus(sock, statusKey) {
+    if (!isStatusReactionEnabled()) return;
+    await sendStatusReaction(sock, statusKey);
 }
 
 // Function to handle status updates
@@ -232,5 +235,7 @@ async function handleStatusUpdate(sock, status) {
 
 module.exports = {
     autoStatusCommand,
-    handleStatusUpdate
+    handleStatusUpdate,
+    sendStatusReaction,
+    getStatusReactionEmoji
 };

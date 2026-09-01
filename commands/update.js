@@ -46,8 +46,8 @@ function restoreData(snapshot) {
     }
 }
 
-async function updateViaGit() {
-    const dataSnapshot = snapshotData();
+async function updateViaGit(force = false) {
+    const dataSnapshot = force ? null : snapshotData();
     const oldRev = (await run('git rev-parse HEAD').catch(() => 'unknown')).trim();
     await run('git fetch --all --prune');
     const newRev = (await run('git rev-parse origin/main')).trim();
@@ -55,8 +55,8 @@ async function updateViaGit() {
     const commits = alreadyUpToDate ? '' : await run(`git log --pretty=format:"%h %s (%an)" ${oldRev}..${newRev}`).catch(() => '');
     const files = alreadyUpToDate ? '' : await run(`git diff --name-status ${oldRev} ${newRev}`).catch(() => '');
     await run(`git reset --hard ${newRev}`);
-    await run('git clean -fd -e data -e session');
-    restoreData(dataSnapshot);
+    await run(force ? 'git clean -fd -e session -e node_modules' : 'git clean -fd -e data -e session');
+    if (dataSnapshot) restoreData(dataSnapshot);
     return { oldRev, newRev, alreadyUpToDate, commits, files };
 }
 
@@ -149,7 +149,7 @@ function copyRecursive(src, dest, ignore = [], relative = '', outList = []) {
     }
 }
 
-async function updateViaZip(sock, chatId, message, zipOverride) {
+async function updateViaZip(sock, chatId, message, zipOverride, force = false) {
     const zipUrl = (zipOverride || settings.updateZipUrl || process.env.UPDATE_ZIP_URL || '').trim();
     if (!zipUrl) {
         throw new Error('No ZIP URL configured. Set settings.updateZipUrl or UPDATE_ZIP_URL env.');
@@ -167,7 +167,9 @@ async function updateViaZip(sock, chatId, message, zipOverride) {
     const srcRoot = fs.existsSync(root) && fs.lstatSync(root).isDirectory() ? root : extractTo;
 
     // Copy over while preserving runtime dirs/files
-    const ignore = ['node_modules', '.git', 'session', 'tmp', 'tmp/', 'temp', 'data', 'baileys_store.json'];
+    const ignore = force
+        ? ['node_modules', '.git', 'session']
+        : ['node_modules', '.git', 'session', 'tmp', 'tmp/', 'temp', 'data', 'baileys_store.json'];
     const copied = [];
     // Preserve ownerNumber from existing settings.js if present
     let preservedOwner = null;
@@ -213,7 +215,7 @@ async function restartProcess(sock, chatId, message) {
     }, 500);
 }
 
-async function updateCommand(sock, chatId, message, zipOverride) {
+async function updateCommand(sock, chatId, message, zipOverride, force = false) {
     const senderId = message.key.participant || message.key.remoteJid;
     const isOwner = await isOwnerOrSudo(senderId, sock, chatId);
     
@@ -223,17 +225,21 @@ async function updateCommand(sock, chatId, message, zipOverride) {
     }
     try {
         // Minimal UX
-        await sock.sendMessage(chatId, { text: '🔄 Updating the bot, please wait…' }, { quoted: message });
+        await sock.sendMessage(chatId, {
+            text: force
+                ? '🔄 Syncing every file with the main repo (session folder kept), please wait…'
+                : '🔄 Updating the bot, please wait…'
+        }, { quoted: message });
         if (await hasGitRepo()) {
             // silent
-            const { oldRev, newRev, alreadyUpToDate, commits, files } = await updateViaGit();
+            const { oldRev, newRev, alreadyUpToDate, commits, files } = await updateViaGit(force);
             // Short message only: version info
             const summary = alreadyUpToDate ? `✅ Already up to date: ${newRev}` : `✅ Updated to ${newRev}`;
             console.log('[update] summary generated');
             // silent
             await run('npm install --no-audit --no-fund');
         } else {
-            const { copiedFiles } = await updateViaZip(sock, chatId, message, zipOverride);
+            const { copiedFiles } = await updateViaZip(sock, chatId, message, zipOverride, force);
             // silent
         }
         try {
