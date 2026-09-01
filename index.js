@@ -1,6 +1,6 @@
 /**
- * Knight Bot - A WhatsApp Bot
- * Copyright (c) 2024 Professor
+ * MEHTAB-MD - A WhatsApp Bot
+ * Copyright (c) 2024 MALIK MEHTAB
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the MIT License.
@@ -161,7 +161,7 @@ async function startXeonBotInc() {
                             isForwarded: true,
                             forwardedNewsletterMessageInfo: {
                                 newsletterJid: '120363161513685998@newsletter',
-                                newsletterName: 'KnightBot MD',
+                                newsletterName: 'MEHTAB-MD',
                                 serverMessageId: -1
                             }
                         }
@@ -270,7 +270,7 @@ async function startXeonBotInc() {
                         isForwarded: true,
                         forwardedNewsletterMessageInfo: {
                             newsletterJid: '120363161513685998@newsletter',
-                            newsletterName: 'KnightBot MD',
+                            newsletterName: 'MEHTAB-MD',
                             serverMessageId: -1
                         }
                     }
