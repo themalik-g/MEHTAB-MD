@@ -8,18 +8,23 @@ const tempDir = path.join(__dirname, '../temp');
 // Ensure directories exist
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-// Message cache (keeps up to 1500 recent messages)
+// Message cache (keeps up to 2000 recent messages)
 const messageStore = new Map();
-const MAX_MESSAGES = 1500;
+const MAX_MESSAGES = 2000;
 
 function readConfig() {
     try {
         if (!fs.existsSync(configPath)) {
-            fs.writeFileSync(configPath, JSON.stringify({ enabled: true, sendTo: 'chat' }, null, 2));
+            const defaultConfig = { enabled: true, sendTo: 'chat', antiedit: true, antieditSendTo: 'owner' };
+            fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
+            return defaultConfig;
         }
-        return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        if (data.antiedit === undefined) data.antiedit = true;
+        if (!data.antieditSendTo) data.antieditSendTo = 'owner';
+        return data;
     } catch (e) {
-        return { enabled: true, sendTo: 'chat' }; // 'chat' = group/current chat, 'owner' = bot owner DM
+        return { enabled: true, sendTo: 'chat', antiedit: true, antieditSendTo: 'owner' };
     }
 }
 
@@ -30,16 +35,37 @@ function saveConfig(data) {
 /**
  * Stores incoming message metadata and downloads media if applicable
  */
-async function storeMessage(msg, sock) {
+async function storeMessage(sock, msg) {
     try {
+        // Handle argument order if storeMessage is called as (msg, sock) or (sock, msg)
+        if (sock && sock.key && sock.message) {
+            const temp = sock;
+            sock = msg;
+            msg = temp;
+        }
+
         if (!msg?.key?.id || !msg?.message) return;
+
+        // Don't store protocol messages (deletions/edits) directly
         if (msg.message.protocolMessage) return;
 
         const messageId = msg.key.id;
         const from = msg.key.remoteJid;
         const isGroup = from.endsWith('@g.us');
         const sender = isGroup ? (msg.key.participant || msg.participant) : from;
-        const type = getContentType(msg.message);
+
+        // Unpack ephemeral or viewOnce wrappers if needed
+        let messageContent = msg.message;
+        if (messageContent.ephemeralMessage) {
+            messageContent = messageContent.ephemeralMessage.message;
+        }
+        if (messageContent.viewOnceMessageV2) {
+            messageContent = messageContent.viewOnceMessageV2.message;
+        } else if (messageContent.viewOnceMessage) {
+            messageContent = messageContent.viewOnceMessage.message;
+        }
+
+        const type = getContentType(messageContent);
 
         let content = '';
         let mediaType = null;
@@ -47,22 +73,25 @@ async function storeMessage(msg, sock) {
 
         // Extract Text Content
         if (type === 'conversation') {
-            content = msg.message.conversation;
+            content = messageContent.conversation;
         } else if (type === 'extendedTextMessage') {
-            content = msg.message.extendedTextMessage.text;
+            content = messageContent.extendedTextMessage.text;
         } else if (type === 'imageMessage') {
             mediaType = 'image';
-            content = msg.message.imageMessage.caption || '';
+            content = messageContent.imageMessage.caption || '';
         } else if (type === 'videoMessage') {
             mediaType = 'video';
-            content = msg.message.videoMessage.caption || '';
+            content = messageContent.videoMessage.caption || '';
         } else if (type === 'stickerMessage') {
             mediaType = 'sticker';
         } else if (type === 'audioMessage') {
             mediaType = 'audio';
+        } else if (type === 'documentMessage') {
+            mediaType = 'document';
+            content = messageContent.documentMessage.caption || messageContent.documentMessage.fileName || '';
         }
 
-        // Cache message metadata
+        // Cache cleanup if threshold reached
         if (messageStore.size >= MAX_MESSAGES) {
             const oldestKey = messageStore.keys().next().value;
             const oldestMsg = messageStore.get(oldestKey);
@@ -73,15 +102,15 @@ async function storeMessage(msg, sock) {
         }
 
         // Save media to temp directory if message contains media
-        if (mediaType) {
+        if (mediaType && sock) {
             try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
                     logger: console,
-                    reuploadRequest: sock?.updateMediaMessage
+                    reuploadRequest: sock.updateMediaMessage
                 });
                 
                 if (buffer) {
-                    const ext = mediaType === 'image' ? 'jpg' : mediaType === 'video' ? 'mp4' : mediaType === 'sticker' ? 'webp' : 'mp3';
+                    const ext = mediaType === 'image' ? 'jpg' : mediaType === 'video' ? 'mp4' : mediaType === 'sticker' ? 'webp' : mediaType === 'audio' ? 'mp3' : 'bin';
                     const filename = `antidel_${Date.now()}_${messageId}.${ext}`;
                     mediaPath = path.join(tempDir, filename);
                     fs.writeFileSync(mediaPath, buffer);
@@ -106,171 +135,258 @@ async function storeMessage(msg, sock) {
 }
 
 /**
- * Handles detection and restoration of revoked messages
+ * Handles detection and restoration of revoked or edited messages
  */
 async function handleMessageRevocation(sock, revocationMessage) {
     try {
         const config = readConfig();
-        if (!config.enabled) return;
 
         const protocolMsg = revocationMessage.message?.protocolMessage;
-        if (!protocolMsg || protocolMsg.type !== 0) return;
+        if (!protocolMsg) return;
 
         const messageId = protocolMsg.key?.id;
         if (!messageId) return;
 
-        const original = messageStore.get(messageId);
-        if (!original) return;
-
-        const remoteJid = protocolMsg.key.remoteJid;
-        const deletedBy = revocationMessage.key.participant || revocationMessage.participant || remoteJid;
         const botNumber = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
 
-        // Ignore if deleted by the bot itself
-        if (deletedBy.includes(botNumber.split('@')[0])) return;
+        // TYPE 0: REVOKE / DELETE
+        if (protocolMsg.type === 0 || protocolMsg.type === 'REVOKE') {
+            if (!config.enabled) return;
 
-        const sender = original.sender;
-        const senderName = sender.split('@')[0];
-        let groupName = '';
+            const original = messageStore.get(messageId);
+            if (!original) return;
 
-        if (original.group) {
-            try {
-                const groupMetadata = await sock.groupMetadata(original.group);
-                groupName = groupMetadata.subject;
-            } catch (e) {
-                groupName = 'Group Chat';
-            }
-        }
+            const remoteJid = revocationMessage.key.remoteJid;
+            const deletedBy = revocationMessage.key.participant || revocationMessage.participant || remoteJid;
 
-        const time = new Date().toLocaleString('en-US', {
-            timeZone: 'Asia/Kolkata',
-            hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit',
-            day: '2-digit', month: '2-digit', year: 'numeric'
-        });
+            // Ignore if deleted by the bot itself
+            if (deletedBy.includes(botNumber.split('@')[0])) return;
 
-        let text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
-            `*🗑️ Deleted By:* @${deletedBy.split('@')[0]}\n` +
-            `*👤 Sender:* @${senderName}\n` +
-            `*📱 Number:* +${sender.split('@')[0]}\n` +
-            `*🕒 Time:* ${time}\n`;
+            const sender = original.sender;
+            const senderName = sender.split('@')[0];
+            let groupName = '';
 
-        if (groupName) text += `*👥 Group:* ${groupName}\n`;
-        if (original.content) text += `\n*💬 Deleted Message:*\n${original.content}`;
-
-        // Destination: send to current chat or owner's DM based on configuration
-        const targetJid = config.sendTo === 'owner' ? botNumber : remoteJid;
-        const mentions = [deletedBy, sender];
-
-        // 1. Send Report Header
-        await sock.sendMessage(targetJid, {
-            text,
-            mentions
-        });
-
-        // 2. Send Recovered Media
-        if (original.mediaType && original.mediaPath && fs.existsSync(original.mediaPath)) {
-            const mediaOptions = {
-                caption: `*Deleted ${original.mediaType.toUpperCase()}*\nSender: @${senderName}`,
-                mentions: [sender]
-            };
-
-            try {
-                switch (original.mediaType) {
-                    case 'image':
-                        await sock.sendMessage(targetJid, {
-                            image: fs.readFileSync(original.mediaPath),
-                            ...mediaOptions
-                        });
-                        break;
-                    case 'video':
-                        await sock.sendMessage(targetJid, {
-                            video: fs.readFileSync(original.mediaPath),
-                            ...mediaOptions
-                        });
-                        break;
-                    case 'sticker':
-                        await sock.sendMessage(targetJid, {
-                            sticker: fs.readFileSync(original.mediaPath)
-                        });
-                        break;
-                    case 'audio':
-                        await sock.sendMessage(targetJid, {
-                            audio: fs.readFileSync(original.mediaPath),
-                            mimetype: 'audio/mpeg',
-                            ptt: false,
-                            ...mediaOptions
-                        });
-                        break;
+            if (original.group) {
+                try {
+                    const groupMetadata = await sock.groupMetadata(original.group);
+                    groupName = groupMetadata.subject;
+                } catch (e) {
+                    groupName = 'Group Chat';
                 }
-            } catch (err) {
-                console.error('Error re-sending media:', err);
             }
 
-            // Cleanup local temp file
-            try {
-                fs.unlinkSync(original.mediaPath);
-            } catch (err) {}
+            const time = new Date().toLocaleString('en-US', {
+                timeZone: 'Asia/Kolkata',
+                hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit',
+                day: '2-digit', month: '2-digit', year: 'numeric'
+            });
+
+            let text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
+                `*🗑️ Deleted By:* @${deletedBy.split('@')[0]}\n` +
+                `*👤 Sender:* @${senderName}\n` +
+                `*📱 Number:* +${sender.split('@')[0]}\n` +
+                `*🕒 Time:* ${time}\n`;
+
+            if (groupName) text += `*👥 Group:* ${groupName}\n`;
+            if (original.content) text += `\n*💬 Deleted Message:*\n${original.content}`;
+
+            const targetJid = config.sendTo === 'owner' ? botNumber : remoteJid;
+            const mentions = [deletedBy, sender];
+
+            // Send Report Header
+            await sock.sendMessage(targetJid, { text, mentions });
+
+            // Send Recovered Media if applicable
+            if (original.mediaType && original.mediaPath && fs.existsSync(original.mediaPath)) {
+                const mediaOptions = {
+                    caption: `*Deleted ${original.mediaType.toUpperCase()}*\nSender: @${senderName}`,
+                    mentions: [sender]
+                };
+
+                try {
+                    switch (original.mediaType) {
+                        case 'image':
+                            await sock.sendMessage(targetJid, { image: fs.readFileSync(original.mediaPath), ...mediaOptions });
+                            break;
+                        case 'video':
+                            await sock.sendMessage(targetJid, { video: fs.readFileSync(original.mediaPath), ...mediaOptions });
+                            break;
+                        case 'sticker':
+                            await sock.sendMessage(targetJid, { sticker: fs.readFileSync(original.mediaPath) });
+                            break;
+                        case 'audio':
+                            await sock.sendMessage(targetJid, { audio: fs.readFileSync(original.mediaPath), mimetype: 'audio/mpeg', ptt: false, ...mediaOptions });
+                            break;
+                        case 'document':
+                            await sock.sendMessage(targetJid, { document: fs.readFileSync(original.mediaPath), mimetype: 'application/octet-stream', ...mediaOptions });
+                            break;
+                    }
+                } catch (err) {
+                    console.error('Error re-sending media:', err);
+                }
+
+                try { fs.unlinkSync(original.mediaPath); } catch (err) {}
+            }
+
+            messageStore.delete(messageId);
+            return;
         }
 
-        messageStore.delete(messageId);
+        // TYPE 14 / MESSAGE_EDIT: EDIT DETECTED
+        if (protocolMsg.type === 14 || protocolMsg.type === 'MESSAGE_EDIT' || protocolMsg.editedMessage) {
+            if (!config.antiedit) return;
+
+            const original = messageStore.get(messageId);
+            const editedContentMsg = protocolMsg.editedMessage;
+
+            let newText = '';
+            if (editedContentMsg) {
+                const type = getContentType(editedContentMsg);
+                if (type === 'conversation') newText = editedContentMsg.conversation;
+                else if (type === 'extendedTextMessage') newText = editedContentMsg.extendedTextMessage.text;
+                else if (editedContentMsg.imageMessage) newText = editedContentMsg.imageMessage.caption || '[Image]';
+                else if (editedContentMsg.videoMessage) newText = editedContentMsg.videoMessage.caption || '[Video]';
+            }
+
+            const remoteJid = revocationMessage.key.remoteJid;
+            const editor = revocationMessage.key.participant || revocationMessage.participant || remoteJid;
+            const sender = original?.sender || editor;
+
+            let groupName = '';
+            if (remoteJid.endsWith('@g.us')) {
+                try {
+                    const groupMetadata = await sock.groupMetadata(remoteJid);
+                    groupName = groupMetadata.subject;
+                } catch (e) {
+                    groupName = 'Group Chat';
+                }
+            }
+
+            const time = new Date().toLocaleString('en-US', {
+                timeZone: 'Asia/Kolkata',
+                hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit',
+                day: '2-digit', month: '2-digit', year: 'numeric'
+            });
+
+            let text = `*✏️ ANTI-EDIT REPORT ✏️*\n\n` +
+                `*👤 Edited By:* @${editor.split('@')[0]}\n` +
+                `*🕒 Time:* ${time}\n`;
+
+            if (groupName) text += `*👥 Group:* ${groupName}\n`;
+
+            text += `\n*📝 Original Message:*\n${original?.content || '*(Original message not found in cache)*'}\n\n`;
+            text += `*🆕 Edited Message:*\n${newText || '*(New text unavailable)*'}`;
+
+            const targetJid = config.antieditSendTo === 'owner' ? botNumber : remoteJid;
+
+            await sock.sendMessage(targetJid, {
+                text,
+                mentions: [editor]
+            });
+
+            // Update cached message content with new text
+            if (original) {
+                original.content = newText;
+                messageStore.set(messageId, original);
+            }
+        }
     } catch (err) {
         console.error('handleMessageRevocation error:', err);
     }
 }
 
 /**
- * Command Handler
+ * Command Handler for .antidelete
  */
-async function handleAntideleteCommand(sock, m, args) {
-    if (!m.isOwner && !m.isAdmin) {
-        return m.reply('❌ This command can only be used by Group Admins or the Bot Owner.');
-    }
-
+async function handleAntideleteCommand(sock, chatId, message, args) {
     const action = args[0]?.toLowerCase();
     const config = readConfig();
 
     if (action === 'on' || action === 'enable') {
         config.enabled = true;
         saveConfig(config);
-        return m.reply('✅ *Anti-Delete has been ENABLED.* Deleted messages will now be caught.');
+        return sock.sendMessage(chatId, { text: '✅ *Anti-Delete has been ENABLED.* Deleted messages will now be caught.' }, { quoted: message });
     } else if (action === 'off' || action === 'disable') {
         config.enabled = false;
         saveConfig(config);
-        return m.reply('❌ *Anti-Delete has been DISABLED.*');
+        return sock.sendMessage(chatId, { text: '❌ *Anti-Delete has been DISABLED.*' }, { quoted: message });
     } else if (action === 'to' || action === 'mode') {
         const mode = args[1]?.toLowerCase();
         if (mode === 'chat' || mode === 'group') {
             config.sendTo = 'chat';
             saveConfig(config);
-            return m.reply('✅ Recovered messages will now be sent to the **chat/group** where they were deleted.');
+            return sock.sendMessage(chatId, { text: '✅ Recovered deleted messages will now be sent to the *chat/group* where they were deleted.' }, { quoted: message });
         } else if (mode === 'owner' || mode === 'dm') {
             config.sendTo = 'owner';
             saveConfig(config);
-            return m.reply('✅ Recovered messages will now be forwarded to the **Owner DM**.');
+            return sock.sendMessage(chatId, { text: '✅ Recovered deleted messages will now be forwarded to the *Owner DM*.' }, { quoted: message });
         } else {
-            return m.reply('⚠️ Use: `.antidelete to chat` or `.antidelete to owner`');
+            return sock.sendMessage(chatId, { text: '⚠️ Use: `.antidelete to chat` or `.antidelete to owner`' }, { quoted: message });
         }
     } else {
-        return m.reply(
-            `*───『 🔰 ANTIDELETE SETTINGS 🔰 』───*\n\n` +
-            `*• Status:* ${config.enabled ? '🟢 ENABLED' : '🔴 DISABLED'}\n` +
-            `*• Destination:* ${config.sendTo === 'owner' ? '👤 Owner DM' : '👥 Current Chat'}\n\n` +
-            `*Commands:*\n` +
-            `• \`.antidelete on\` - Activate anti-delete\n` +
-            `• \`.antidelete off\` - Deactivate anti-delete\n` +
-            `• \`.antidelete to chat\` - Restore deleted message in chat\n` +
-            `• \`.antidelete to owner\` - Forward deleted message to owner DM`
-        );
+        return sock.sendMessage(chatId, {
+            text: `*───『 🔰 ANTIDELETE SETTINGS 🔰 』───*\n\n` +
+                  `*• Status:* ${config.enabled ? '🟢 ENABLED' : '🔴 DISABLED'}\n` +
+                  `*• Destination:* ${config.sendTo === 'owner' ? '👤 Owner DM' : '👥 Current Chat'}\n\n` +
+                  `*Commands:*\n` +
+                  `• \`.antidelete on\` - Activate anti-delete\n` +
+                  `• \`.antidelete off\` - Deactivate anti-delete\n` +
+                  `• \`.antidelete to chat\` - Restore deleted message in chat\n` +
+                  `• \`.antidelete to owner\` - Forward deleted message to owner DM`
+        }, { quoted: message });
+    }
+}
+
+/**
+ * Command Handler for .antiedit
+ */
+async function handleAntieditCommand(sock, chatId, message, args) {
+    const action = args[0]?.toLowerCase();
+    const config = readConfig();
+
+    if (action === 'on' || action === 'enable') {
+        config.antiedit = true;
+        saveConfig(config);
+        return sock.sendMessage(chatId, { text: '✅ *Anti-Edit has been ENABLED.* Edited messages will now be caught.' }, { quoted: message });
+    } else if (action === 'off' || action === 'disable') {
+        config.antiedit = false;
+        saveConfig(config);
+        return sock.sendMessage(chatId, { text: '❌ *Anti-Edit has been DISABLED.*' }, { quoted: message });
+    } else if (action === 'to' || action === 'mode') {
+        const mode = args[1]?.toLowerCase();
+        if (mode === 'chat' || mode === 'group') {
+            config.antieditSendTo = 'chat';
+            saveConfig(config);
+            return sock.sendMessage(chatId, { text: '✅ Edit reports will now be sent to the *chat/group*.' }, { quoted: message });
+        } else if (mode === 'owner' || mode === 'dm') {
+            config.antieditSendTo = 'owner';
+            saveConfig(config);
+            return sock.sendMessage(chatId, { text: '✅ Edit reports will now be sent to *Owner DM*.' }, { quoted: message });
+        } else {
+            return sock.sendMessage(chatId, { text: '⚠️ Use: `.antiedit to chat` or `.antiedit to owner`' }, { quoted: message });
+        }
+    } else {
+        return sock.sendMessage(chatId, {
+            text: `*───『 ✏️ ANTI-EDIT SETTINGS ✏️ 』───*\n\n` +
+                  `*• Status:* ${config.antiedit ? '🟢 ENABLED' : '🔴 DISABLED'}\n` +
+                  `*• Destination:* ${config.antieditSendTo === 'owner' ? '👤 Owner DM' : '👥 Current Chat'}\n\n` +
+                  `*Commands:*\n` +
+                  `• \`.antiedit on\` - Activate anti-edit\n` +
+                  `• \`.antiedit off\` - Deactivate anti-edit\n` +
+                  `• \`.antiedit to chat\` - Send edit report in current chat\n` +
+                  `• \`.antiedit to owner\` - Send edit report to owner DM`
+        }, { quoted: message });
     }
 }
 
 module.exports = {
     name: 'antidelete',
-    alias: ['antidel', 'antirevoke'],
+    alias: ['antidel', 'antirevoke', 'antiedit'],
     category: 'group',
-    desc: 'Capture and recover deleted messages',
+    desc: 'Capture and recover deleted or edited messages',
     execute: handleAntideleteCommand,
     handleAntideleteCommand,
+    handleAntieditCommand,
     handleMessageRevocation,
     storeMessage
 };
