@@ -16,6 +16,7 @@ async function helpCommand(sock, chatId, message) {
 ┌── ❮ 🌐 ɢᴇɴᴇʀᴀʟ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .help or .menu
+│ ◈ .learn <topic/all>
 │ ◈ .ping
 │ ◈ .alive
 │ ◈ .tts <text>
@@ -36,6 +37,8 @@ async function helpCommand(sock, chatId, message) {
 │ ◈ .ss <link>
 │ ◈ .jid
 │ ◈ .url
+│ ◈ .movie <name>
+│ ◈ .qr <text/reply to img>
 │
 └───────────────────┈⚝
 
@@ -91,6 +94,8 @@ async function helpCommand(sock, chatId, message) {
 │ ◈ .pmblocker setmsg <text>
 │ ◈ .setmention <reply to msg>
 │ ◈ .mention <on/off>
+│ ◈ .alwaysonline <on/off>
+│ ◈ .getonline
 │
 └───────────────────┈⚝
 
