@@ -108,7 +108,7 @@ const { simpCommand } = require('./commands/simp');
 const { stupidCommand } = require('./commands/stupid');
 const stickerTelegramCommand = require('./commands/stickertelegram');
 const textmakerCommand = require('./commands/textmaker');
-const { handleAntideleteCommand, handleMessageRevocation, storeMessage } = require('./commands/antidelete');
+const { handleAntideleteCommand, handleMessageRevocation, handleRevocationUpdate, storeMessage } = require('./commands/antidelete');
 const clearTmpCommand = require('./commands/cleartmp');
 const setProfilePicture = require('./commands/setpp');
 const getppCommand = require('./commands/getpp');
@@ -143,7 +143,8 @@ const { pmblockerCommand, readState: readPmBlockerState } = require('./commands/
 const settingsCommand = require('./commands/settings');
 const soraCommand = require('./commands/sora');
 const { antiVVCommand, handleAntiVV } = require('./commands/antivv');
-const { antiEditCommand, handleAntiEdit, storeMessageContent } = require('./commands/antiedit');
+const { antiEditCommand, handleAntiEdit, handleAntiEditUpdate, storeMessageContent } = require('./commands/antiedit');
+const { getProtocolMessage } = require('./lib/msgcontent');
 const movieCommand = require('./commands/movie');
 const qrCommand = require('./commands/qr');
 const { alwaysOnlineCommand } = require('./commands/alwaysonline');
@@ -186,13 +187,16 @@ async function handleMessages(sock, messageUpdate, printLog) {
             await handleAntiVV(sock, message);
         }
 
-        // Handle message revocation (Anti-Delete) and message editing (Anti-Edit)
-        if (message.message?.protocolMessage) {
-            const protoType = message.message.protocolMessage.type;
+        // Handle message revocation (Anti-Delete) and message editing (Anti-Edit).
+        // Protocol messages are usually wrapped (editedMessage / ephemeralMessage),
+        // so they have to be read from the normalized content.
+        const protocolMsg = getProtocolMessage(message.message);
+        if (protocolMsg) {
+            const protoType = protocolMsg.type;
             if (protoType === 0 || protoType === 'REVOKE') {
                 await handleMessageRevocation(sock, message);
                 return;
-            } else if (protoType === 14 || protoType === 'MESSAGE_EDIT' || message.message.protocolMessage.editedMessage) {
+            } else if (protoType === 14 || protoType === 'MESSAGE_EDIT' || protocolMsg.editedMessage) {
                 await handleAntiEdit(sock, message);
                 return;
             }
@@ -1246,8 +1250,27 @@ async function handleGroupParticipantUpdate(sock, update) {
     }
 }
 
+/**
+ * Deletions and edits are also reported through `messages.update`, which is the
+ * only path that fires when Baileys unwraps the protocol message itself.
+ */
+async function handleMessageUpdates(sock, updates) {
+    for (const update of updates || []) {
+        try {
+            if (update?.update?.message === null) {
+                await handleRevocationUpdate(sock, update);
+            } else if (update?.update?.message?.editedMessage) {
+                await handleAntiEditUpdate(sock, update);
+            }
+        } catch (error) {
+            console.error('Error in handleMessageUpdates:', error);
+        }
+    }
+}
+
 module.exports = {
     handleMessages,
+    handleMessageUpdates,
     handleGroupParticipantUpdate,
     handleStatus: async (sock, status) => {
         await handleStatusUpdate(sock, status);

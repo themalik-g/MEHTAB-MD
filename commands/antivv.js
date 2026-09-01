@@ -2,8 +2,26 @@ const fs = require('fs');
 const path = require('path');
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const isOwnerOrSudo = require('../lib/isOwner');
+const { getViewOnceContent } = require('../lib/msgcontent');
+const { getOwnerJid } = require('../lib/jids');
 
 const configPath = path.join(__dirname, '../data/antivv.json');
+
+const handledViewOnce = new Set();
+
+function alreadyHandled(id) {
+    if (!id) return false;
+    if (handledViewOnce.has(id)) return true;
+    handledViewOnce.add(id);
+    setTimeout(() => handledViewOnce.delete(id), 300000);
+    return false;
+}
+
+async function toBuffer(stream) {
+    let buffer = Buffer.from([]);
+    for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
+    return buffer;
+}
 
 function readConfig() {
     try {
@@ -38,7 +56,7 @@ async function antiVVCommand(sock, chatId, message, rawMatch = '') {
         return await sock.sendMessage(chatId, { text: '❌ Only owner/sudo can use anti view once command.' }, { quoted: message });
     }
 
-    const match = rawMatch.trim();
+    const match = rawMatch.trim().replace(/^(on|enable)\b/i, 'g');
     const parts = match.split(/\s+/);
     const dest = parts[0] || '';
     const scope = parts[1]?.toLowerCase() || '';
@@ -55,6 +73,7 @@ async function antiVVCommand(sock, chatId, message, rawMatch = '') {
                 `- .antivv g gm - Same chat, groups only\n` +
                 `- .antivv p no-gm - To owner, exclude groups\n` +
                 `- .antivv <jid> - Send VV to specific JID\n` +
+                `- .antivv on - Same as .antivv g\n` +
                 `- .antivv off - Disable anti view once\n\n` +
                 `*Scopes:* pm, gm, no-pm, no-gm`
         }, { quoted: message });
@@ -109,60 +128,42 @@ async function handleAntiVV(sock, message) {
         if (scope === 'no-pm' && !isGroup) return;
         if (scope === 'no-gm' && isGroup) return;
 
-        // Extract viewOnce media from message
-        let msgObj = message.message;
-        let isViewOnce = false;
+        // Extract viewOnce media from any of its wrappers (plain, ephemeral,
+        // v2, v2 extension) or from media flagged with viewOnce directly
+        const msgObj = getViewOnceContent(message.message);
+        if (!msgObj) return;
+        if (alreadyHandled(message.key?.id)) return;
 
-        if (msgObj?.viewOnceMessage) {
-            msgObj = msgObj.viewOnceMessage.message;
-            isViewOnce = true;
-        } else if (msgObj?.viewOnceMessageV2) {
-            msgObj = msgObj.viewOnceMessageV2.message;
-            isViewOnce = true;
-        } else if (msgObj?.viewOnceMessageV2Extension) {
-            msgObj = msgObj.viewOnceMessageV2Extension.message;
-            isViewOnce = true;
-        }
+        const imgMsg = msgObj.imageMessage;
+        const videoMsg = msgObj.videoMessage;
+        const audioMsg = msgObj.audioMessage;
 
-        const imgMsg = msgObj?.imageMessage;
-        const videoMsg = msgObj?.videoMessage;
-        const audioMsg = msgObj?.audioMessage;
-
-        if (imgMsg?.viewOnce || videoMsg?.viewOnce || audioMsg?.viewOnce) {
-            isViewOnce = true;
-        }
-
-        if (!isViewOnce) return;
-
-        const ownerJid = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
-        const targetJid = parseJid(dest) || (dest === 'p' ? ownerJid : chatId);
+        const targetJid = parseJid(dest) || (dest === 'p' ? getOwnerJid(sock) : chatId);
 
         const sender = message.key.participant || message.key.remoteJid;
         const senderName = sender.split('@')[0];
         const captionPrefix = `*👁️ ANTIVIEWONCE DETECTED 👁️*\n*From:* @${senderName}\n\n`;
 
         if (imgMsg) {
-            const stream = await downloadContentFromMessage(imgMsg, 'image');
-            let buffer = Buffer.from([]);
-            for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
+            const buffer = await toBuffer(await downloadContentFromMessage(imgMsg, 'image'));
             await sock.sendMessage(targetJid, {
                 image: buffer,
                 caption: captionPrefix + (imgMsg.caption || ''),
                 mentions: [sender]
             });
         } else if (videoMsg) {
-            const stream = await downloadContentFromMessage(videoMsg, 'video');
-            let buffer = Buffer.from([]);
-            for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
+            const buffer = await toBuffer(await downloadContentFromMessage(videoMsg, 'video'));
             await sock.sendMessage(targetJid, {
                 video: buffer,
                 caption: captionPrefix + (videoMsg.caption || ''),
                 mentions: [sender]
             });
         } else if (audioMsg) {
-            const stream = await downloadContentFromMessage(audioMsg, 'audio');
-            let buffer = Buffer.from([]);
-            for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
+            const buffer = await toBuffer(await downloadContentFromMessage(audioMsg, 'audio'));
+            await sock.sendMessage(targetJid, {
+                text: captionPrefix.trim(),
+                mentions: [sender]
+            });
             await sock.sendMessage(targetJid, {
                 audio: buffer,
                 mimetype: audioMsg.mimetype || 'audio/mp4',

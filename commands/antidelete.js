@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const { getContentType, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { unwrapMessage, getProtocolMessage } = require('../lib/msgcontent');
+const { getOwnerJid, isBotJid } = require('../lib/jids');
 
 const configPath = path.join(__dirname, '../data/antidelete.json');
 const tempDir = path.join(__dirname, '../temp');
@@ -12,6 +14,16 @@ if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 const messageStore = new Map();
 const MAX_MESSAGES = 2000;
 
+// Revocations can reach us from both messages.upsert and messages.update
+const handledRevocations = new Set();
+
+function alreadyHandled(messageId) {
+    if (handledRevocations.has(messageId)) return true;
+    handledRevocations.add(messageId);
+    setTimeout(() => handledRevocations.delete(messageId), 60000);
+    return false;
+}
+
 function readConfig() {
     try {
         if (!fs.existsSync(configPath)) {
@@ -19,7 +31,8 @@ function readConfig() {
             fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
             return defaultConfig;
         }
-        return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        return { enabled: !!config.enabled, sendTo: config.sendTo === 'owner' ? 'owner' : 'chat' };
     } catch (e) {
         return { enabled: true, sendTo: 'chat' };
     }
@@ -44,23 +57,16 @@ async function storeMessage(sock, msg) {
         if (!msg?.key?.id || !msg?.message) return;
 
         // Don't store protocol messages (deletions/edits) directly
-        if (msg.message.protocolMessage) return;
+        if (getProtocolMessage(msg.message)) return;
 
         const messageId = msg.key.id;
         const from = msg.key.remoteJid;
         const isGroup = from.endsWith('@g.us');
         const sender = isGroup ? (msg.key.participant || msg.participant) : from;
 
-        // Unpack ephemeral or viewOnce wrappers if needed
-        let messageContent = msg.message;
-        if (messageContent.ephemeralMessage) {
-            messageContent = messageContent.ephemeralMessage.message;
-        }
-        if (messageContent.viewOnceMessageV2) {
-            messageContent = messageContent.viewOnceMessageV2.message;
-        } else if (messageContent.viewOnceMessage) {
-            messageContent = messageContent.viewOnceMessage.message;
-        }
+        // Unpack ephemeral / viewOnce / document-with-caption wrappers
+        const messageContent = unwrapMessage(msg.message);
+        if (!messageContent) return;
 
         const type = getContentType(messageContent);
 
@@ -138,17 +144,16 @@ async function handleMessageRevocation(sock, revocationMessage) {
     try {
         const config = readConfig();
 
-        const protocolMsg = revocationMessage.message?.protocolMessage;
+        const protocolMsg = getProtocolMessage(revocationMessage.message);
         if (!protocolMsg) return;
 
         const messageId = protocolMsg.key?.id;
         if (!messageId) return;
 
-        const botNumber = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
-
         // TYPE 0: REVOKE / DELETE
         if (protocolMsg.type === 0 || protocolMsg.type === 'REVOKE') {
             if (!config.enabled) return;
+            if (alreadyHandled(messageId)) return;
 
             const original = messageStore.get(messageId);
             if (!original) return;
@@ -157,7 +162,7 @@ async function handleMessageRevocation(sock, revocationMessage) {
             const deletedBy = revocationMessage.key.participant || revocationMessage.participant || remoteJid;
 
             // Ignore if deleted by the bot itself
-            if (deletedBy.includes(botNumber.split('@')[0])) return;
+            if (revocationMessage.key.fromMe || isBotJid(sock, deletedBy)) return;
 
             const sender = original.sender;
             const senderName = sender.split('@')[0];
@@ -187,7 +192,7 @@ async function handleMessageRevocation(sock, revocationMessage) {
             if (groupName) text += `*👥 Group:* ${groupName}\n`;
             if (original.content) text += `\n*💬 Deleted Message:*\n${original.content}`;
 
-            const targetJid = config.sendTo === 'owner' ? botNumber : remoteJid;
+            const targetJid = config.sendTo === 'owner' ? getOwnerJid(sock) : remoteJid;
             const mentions = [deletedBy, sender];
 
             // Send Report Header
@@ -235,6 +240,31 @@ async function handleMessageRevocation(sock, revocationMessage) {
 }
 
 /**
+ * Baileys also reports deletions through the `messages.update` event.
+ * Rebuild a revocation message from that payload and reuse the same handler.
+ */
+async function handleRevocationUpdate(sock, update) {
+    try {
+        const deletedId = update?.key?.id;
+        const revokeKey = update?.update?.key || update?.key;
+        if (!deletedId || !revokeKey) return;
+        if (update.update?.message !== null) return;
+
+        await handleMessageRevocation(sock, {
+            key: revokeKey,
+            message: {
+                protocolMessage: {
+                    type: 0,
+                    key: { ...update.key, id: deletedId }
+                }
+            }
+        });
+    } catch (err) {
+        console.error('handleRevocationUpdate error:', err);
+    }
+}
+
+/**
  * Command Handler for .antidelete
  */
 async function handleAntideleteCommand(sock, chatId, message, args) {
@@ -249,13 +279,23 @@ async function handleAntideleteCommand(sock, chatId, message, args) {
         config.enabled = false;
         saveConfig(config);
         return sock.sendMessage(chatId, { text: '❌ *Anti-Delete has been DISABLED.*' }, { quoted: message });
+    } else if (action === 'g' || action === 'chat' || action === 'group') {
+        config.enabled = true;
+        config.sendTo = 'chat';
+        saveConfig(config);
+        return sock.sendMessage(chatId, { text: '✅ Anti-Delete is *ON* and deleted messages will be restored in the *same chat*.' }, { quoted: message });
+    } else if (action === 'p' || action === 'owner' || action === 'dm') {
+        config.enabled = true;
+        config.sendTo = 'owner';
+        saveConfig(config);
+        return sock.sendMessage(chatId, { text: '✅ Anti-Delete is *ON* and deleted messages will be forwarded to the *Owner DM*.' }, { quoted: message });
     } else if (action === 'to' || action === 'mode') {
         const mode = args[1]?.toLowerCase();
-        if (mode === 'chat' || mode === 'group') {
+        if (mode === 'chat' || mode === 'group' || mode === 'g') {
             config.sendTo = 'chat';
             saveConfig(config);
             return sock.sendMessage(chatId, { text: '✅ Recovered deleted messages will now be sent to the *chat/group* where they were deleted.' }, { quoted: message });
-        } else if (mode === 'owner' || mode === 'dm') {
+        } else if (mode === 'owner' || mode === 'dm' || mode === 'p') {
             config.sendTo = 'owner';
             saveConfig(config);
             return sock.sendMessage(chatId, { text: '✅ Recovered deleted messages will now be forwarded to the *Owner DM*.' }, { quoted: message });
@@ -270,8 +310,8 @@ async function handleAntideleteCommand(sock, chatId, message, args) {
                   `*Commands:*\n` +
                   `• \`.antidelete on\` - Activate anti-delete\n` +
                   `• \`.antidelete off\` - Deactivate anti-delete\n` +
-                  `• \`.antidelete to chat\` - Restore deleted message in chat\n` +
-                  `• \`.antidelete to owner\` - Forward deleted message to owner DM`
+                  `• \`.antidelete g\` - Restore deleted message in the same chat\n` +
+                  `• \`.antidelete p\` - Forward deleted message to owner DM`
         }, { quoted: message });
     }
 }
@@ -284,5 +324,6 @@ module.exports = {
     execute: handleAntideleteCommand,
     handleAntideleteCommand,
     handleMessageRevocation,
+    handleRevocationUpdate,
     storeMessage
 };

@@ -25,7 +25,29 @@ async function hasGitRepo() {
     }
 }
 
+// `git reset --hard` + `git clean -fd` would otherwise wipe feature toggles
+// (antidelete/antivv/antiedit/...) stored in data/
+function snapshotData() {
+    const dir = path.join(process.cwd(), 'data');
+    const snapshot = {};
+    if (!fs.existsSync(dir)) return snapshot;
+    for (const file of fs.readdirSync(dir)) {
+        if (!file.endsWith('.json')) continue;
+        try { snapshot[file] = fs.readFileSync(path.join(dir, file), 'utf8'); } catch {}
+    }
+    return snapshot;
+}
+
+function restoreData(snapshot) {
+    const dir = path.join(process.cwd(), 'data');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    for (const [file, content] of Object.entries(snapshot)) {
+        try { fs.writeFileSync(path.join(dir, file), content); } catch {}
+    }
+}
+
 async function updateViaGit() {
+    const dataSnapshot = snapshotData();
     const oldRev = (await run('git rev-parse HEAD').catch(() => 'unknown')).trim();
     await run('git fetch --all --prune');
     const newRev = (await run('git rev-parse origin/main')).trim();
@@ -33,7 +55,8 @@ async function updateViaGit() {
     const commits = alreadyUpToDate ? '' : await run(`git log --pretty=format:"%h %s (%an)" ${oldRev}..${newRev}`).catch(() => '');
     const files = alreadyUpToDate ? '' : await run(`git diff --name-status ${oldRev} ${newRev}`).catch(() => '');
     await run(`git reset --hard ${newRev}`);
-    await run('git clean -fd');
+    await run('git clean -fd -e data -e session');
+    restoreData(dataSnapshot);
     return { oldRev, newRev, alreadyUpToDate, commits, files };
 }
 
