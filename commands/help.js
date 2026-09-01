@@ -15,7 +15,7 @@ async function helpCommand(sock, chatId, message) {
 
 *AVAILABLE COMMANDS*
 
-┌──『 🌐 ɢᴇɴᴇʀᴀʟ ᴄᴏᴍᴍᴀɴᴅꜱ 』
+┌── ❮ 🌐 ɢᴇɴᴇʀᴀʟ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .help or .menu
 │ ◈ .ping
@@ -41,7 +41,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 👮‍♂️ ᴀᴅᴍɪɴ ᴄᴏᴍᴍᴀɴᴅꜱ 』
+┌──❮ 👮‍♂️ ᴀᴅᴍɪɴ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .ban @user
 │ ◈ .promote @user
@@ -70,7 +70,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 🔒 ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅꜱ 』
+┌──❮ 🔐 ᴏᴡɴᴇʀ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .mode <public/private>
 │ ◈ .clearsession
@@ -96,7 +96,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 🎨 ɪᴍᴀɢᴇ / ꜱᴛɪᴄᴋᴇʀ 』
+┌──❮ 🎨 ɪᴍᴀɢᴇ / ꜱᴛɪᴄᴋᴇʀ ❯
 │
 │ ◈ .blur <image>
 │ ◈ .simage <reply to sticker>
@@ -113,7 +113,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 🖼️ ᴘɪᴇꜱ ᴄᴏᴍᴍᴀɴᴅꜱ 』
+┌──❮ 🖼️ ᴘɪᴇꜱ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .pies <country>
 │ ◈ .china
@@ -124,7 +124,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 🎮 ɢᴀᴍᴇ ᴄᴏᴍᴍᴀɴᴅꜱ 』
+┌──❮ 🎮 ɢᴀᴍᴇ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .tictactoe @user
 │ ◈ .hangman
@@ -136,7 +136,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 🤖 ᴀɪ ᴄᴏᴍᴍᴀɴᴅꜱ 』
+┌──❮ 🤖 ᴀɪ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .gpt <question>
 │ ◈ .gemini <question>
@@ -146,7 +146,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 🎯 ꜰᴜɴ ᴄᴏᴍᴍᴀɴᴅꜱ 』
+┌──❮ 💃 ꜰᴜɴ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .compliment @user
 │ ◈ .insult @user
@@ -162,7 +162,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 🔤 ᴛᴇxᴛᴍᴀᴋᴇʀ 』
+┌──❮ 🔤 ᴛᴇXᴛᴍᴀᴋᴇʀ 🔢 ❯
 │
 │ ◈ .metallic <text>
 │ ◈ .ice <text>
@@ -185,7 +185,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 📥 ᴅᴏᴡɴʟᴏᴀᴅᴇʀ 』
+┌──❮ 📥 ᴅᴏᴡɴʟᴏᴀᴅᴇʀ ❯
 │
 │ ◈ .play <song_name>
 │ ◈ .song <song_name>
@@ -198,7 +198,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 🧩 ᴍɪꜱᴄ ᴄᴏᴍᴍᴀɴᴅꜱ 』
+┌──❮ 🧩 ᴍɪꜱᴄ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .heart
 │ ◈ .horny
@@ -219,7 +219,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 🌸 ᴀɴɪᴍᴇ ᴄᴏᴍᴍᴀɴᴅꜱ 』
+┌──❮ 🌸 ᴀɴɪᴍᴇ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .nom
 │ ◈ .poke
@@ -232,7 +232,7 @@ async function helpCommand(sock, chatId, message) {
 │
 └───────────────────┈⚝
 
-┌──『 💻 ɢɪᴛʜᴜʙ ᴄᴏᴍᴍᴀɴᴅꜱ 』
+┌──❮ 💻 ɢɪᴛʜᴜʙ ᴄᴏᴍᴍᴀɴᴅꜱ ❯
 │
 │ ◈ .git
 │ ◈ .github
