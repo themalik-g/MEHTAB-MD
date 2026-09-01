@@ -1,227 +1,146 @@
 const fs = require('fs');
 const path = require('path');
-const { tmpdir } = require('os');
-const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-const { writeFile } = require('fs/promises');
+const { getContentType, downloadMediaMessage } = require('@whiskeysockets/baileys');
 
+const configPath = path.join(__dirname, '../data/antidelete.json');
+const tempDir = path.join(__dirname, '../temp');
+
+// Ensure directories exist
+if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+// Message cache (keeps up to 1500 recent messages)
 const messageStore = new Map();
-const CONFIG_PATH = path.join(__dirname, '../data/antidelete.json');
-const TEMP_MEDIA_DIR = path.join(__dirname, '../tmp');
+const MAX_MESSAGES = 1500;
 
-// Ensure tmp dir exists
-if (!fs.existsSync(TEMP_MEDIA_DIR)) {
-    fs.mkdirSync(TEMP_MEDIA_DIR, { recursive: true });
-}
-
-// Function to get folder size in MB
-const getFolderSizeInMB = (folderPath) => {
+function readConfig() {
     try {
-        const files = fs.readdirSync(folderPath);
-        let totalSize = 0;
-
-        for (const file of files) {
-            const filePath = path.join(folderPath, file);
-            if (fs.statSync(filePath).isFile()) {
-                totalSize += fs.statSync(filePath).size;
-            }
+        if (!fs.existsSync(configPath)) {
+            fs.writeFileSync(configPath, JSON.stringify({ enabled: true, sendTo: 'chat' }, null, 2));
         }
-
-        return totalSize / (1024 * 1024); // Convert bytes to MB
-    } catch (err) {
-        console.error('Error getting folder size:', err);
-        return 0;
-    }
-};
-
-// Function to clean temp folder if size exceeds 10MB
-const cleanTempFolderIfLarge = () => {
-    try {
-        const sizeMB = getFolderSizeInMB(TEMP_MEDIA_DIR);
-        
-        if (sizeMB > 200) {
-            const files = fs.readdirSync(TEMP_MEDIA_DIR);
-            for (const file of files) {
-                const filePath = path.join(TEMP_MEDIA_DIR, file);
-                fs.unlinkSync(filePath);
-            }
-        }
-    } catch (err) {
-        console.error('Temp cleanup error:', err);
-    }
-};
-
-// Start periodic cleanup check every 1 minute
-setInterval(cleanTempFolderIfLarge, 60 * 1000);
-
-// Load config
-function loadAntideleteConfig() {
-    try {
-        if (!fs.existsSync(CONFIG_PATH)) return { enabled: false };
-        return JSON.parse(fs.readFileSync(CONFIG_PATH));
-    } catch {
-        return { enabled: false };
+        return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch (e) {
+        return { enabled: true, sendTo: 'chat' }; // 'chat' = group/current chat, 'owner' = bot owner DM
     }
 }
 
-// Save config
-function saveAntideleteConfig(config) {
-    try {
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-    } catch (err) {
-        console.error('Config save error:', err);
-    }
+function saveConfig(data) {
+    fs.writeFileSync(configPath, JSON.stringify(data, null, 2));
 }
 
-const isOwnerOrSudo = require('../lib/isOwner');
-
-// Command Handler
-async function handleAntideleteCommand(sock, chatId, message, match) {
-    const senderId = message.key.participant || message.key.remoteJid;
-    const isOwner = await isOwnerOrSudo(senderId, sock, chatId);
-    
-    if (!message.key.fromMe && !isOwner) {
-        return sock.sendMessage(chatId, { text: '*Only the bot owner can use this command.*' }, { quoted: message });
-    }
-
-    const config = loadAntideleteConfig();
-
-    if (!match) {
-        return sock.sendMessage(chatId, {
-            text: `*ANTIDELETE SETUP*\n\nCurrent Status: ${config.enabled ? '✅ Enabled' : '❌ Disabled'}\n\n*.antidelete on* - Enable\n*.antidelete off* - Disable`
-        }, {quoted: message});
-    }
-
-    if (match === 'on') {
-        config.enabled = true;
-    } else if (match === 'off') {
-        config.enabled = false;
-    } else {
-        return sock.sendMessage(chatId, { text: '*Invalid command. Use .antidelete to see usage.*' }, {quoted:message});
-    }
-
-    saveAntideleteConfig(config);
-    return sock.sendMessage(chatId, { text: `*Antidelete ${match === 'on' ? 'enabled' : 'disabled'}*` }, {quoted:message});
-}
-
-// Store incoming messages (also handles anti-view-once by forwarding immediately)
-async function storeMessage(sock, message) {
+/**
+ * Stores incoming message metadata and downloads media if applicable
+ */
+async function storeMessage(msg, sock) {
     try {
-        const config = loadAntideleteConfig();
-        if (!config.enabled) return; // Don't store if antidelete is disabled
+        if (!msg?.key?.id || !msg?.message) return;
+        if (msg.message.protocolMessage) return;
 
-        if (!message.key?.id) return;
+        const messageId = msg.key.id;
+        const from = msg.key.remoteJid;
+        const isGroup = from.endsWith('@g.us');
+        const sender = isGroup ? (msg.key.participant || msg.participant) : from;
+        const type = getContentType(msg.message);
 
-        const messageId = message.key.id;
         let content = '';
-        let mediaType = '';
-        let mediaPath = '';
-        let isViewOnce = false;
+        let mediaType = null;
+        let mediaPath = null;
 
-        const sender = message.key.participant || message.key.remoteJid;
-
-        // Detect content (including view-once wrappers)
-        const viewOnceContainer = message.message?.viewOnceMessageV2?.message || message.message?.viewOnceMessage?.message;
-        if (viewOnceContainer) {
-            // unwrap view-once content
-            if (viewOnceContainer.imageMessage) {
-                mediaType = 'image';
-                content = viewOnceContainer.imageMessage.caption || '';
-                const buffer = await downloadContentFromMessage(viewOnceContainer.imageMessage, 'image');
-                mediaPath = path.join(TEMP_MEDIA_DIR, `${messageId}.jpg`);
-                await writeFile(mediaPath, buffer);
-                isViewOnce = true;
-            } else if (viewOnceContainer.videoMessage) {
-                mediaType = 'video';
-                content = viewOnceContainer.videoMessage.caption || '';
-                const buffer = await downloadContentFromMessage(viewOnceContainer.videoMessage, 'video');
-                mediaPath = path.join(TEMP_MEDIA_DIR, `${messageId}.mp4`);
-                await writeFile(mediaPath, buffer);
-                isViewOnce = true;
-            }
-        } else if (message.message?.conversation) {
-            content = message.message.conversation;
-        } else if (message.message?.extendedTextMessage?.text) {
-            content = message.message.extendedTextMessage.text;
-        } else if (message.message?.imageMessage) {
+        // Extract Text Content
+        if (type === 'conversation') {
+            content = msg.message.conversation;
+        } else if (type === 'extendedTextMessage') {
+            content = msg.message.extendedTextMessage.text;
+        } else if (type === 'imageMessage') {
             mediaType = 'image';
-            content = message.message.imageMessage.caption || '';
-            const buffer = await downloadContentFromMessage(message.message.imageMessage, 'image');
-            mediaPath = path.join(TEMP_MEDIA_DIR, `${messageId}.jpg`);
-            await writeFile(mediaPath, buffer);
-        } else if (message.message?.stickerMessage) {
-            mediaType = 'sticker';
-            const buffer = await downloadContentFromMessage(message.message.stickerMessage, 'sticker');
-            mediaPath = path.join(TEMP_MEDIA_DIR, `${messageId}.webp`);
-            await writeFile(mediaPath, buffer);
-        } else if (message.message?.videoMessage) {
+            content = msg.message.imageMessage.caption || '';
+        } else if (type === 'videoMessage') {
             mediaType = 'video';
-            content = message.message.videoMessage.caption || '';
-            const buffer = await downloadContentFromMessage(message.message.videoMessage, 'video');
-            mediaPath = path.join(TEMP_MEDIA_DIR, `${messageId}.mp4`);
-            await writeFile(mediaPath, buffer);
-        } else if (message.message?.audioMessage) {
+            content = msg.message.videoMessage.caption || '';
+        } else if (type === 'stickerMessage') {
+            mediaType = 'sticker';
+        } else if (type === 'audioMessage') {
             mediaType = 'audio';
-            const mime = message.message.audioMessage.mimetype || '';
-            const ext = mime.includes('mpeg') ? 'mp3' : (mime.includes('ogg') ? 'ogg' : 'mp3');
-            const buffer = await downloadContentFromMessage(message.message.audioMessage, 'audio');
-            mediaPath = path.join(TEMP_MEDIA_DIR, `${messageId}.${ext}`);
-            await writeFile(mediaPath, buffer);
+        }
+
+        // Cache message metadata
+        if (messageStore.size >= MAX_MESSAGES) {
+            const oldestKey = messageStore.keys().next().value;
+            const oldestMsg = messageStore.get(oldestKey);
+            if (oldestMsg?.mediaPath && fs.existsSync(oldestMsg.mediaPath)) {
+                try { fs.unlinkSync(oldestMsg.mediaPath); } catch (e) {}
+            }
+            messageStore.delete(oldestKey);
+        }
+
+        // Save media to temp directory if message contains media
+        if (mediaType) {
+            try {
+                const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+                    logger: console,
+                    reuploadRequest: sock?.updateMediaMessage
+                });
+                
+                if (buffer) {
+                    const ext = mediaType === 'image' ? 'jpg' : mediaType === 'video' ? 'mp4' : mediaType === 'sticker' ? 'webp' : 'mp3';
+                    const filename = `antidel_${Date.now()}_${messageId}.${ext}`;
+                    mediaPath = path.join(tempDir, filename);
+                    fs.writeFileSync(mediaPath, buffer);
+                }
+            } catch (err) {
+                // Ignore download errors for expired media
+            }
         }
 
         messageStore.set(messageId, {
+            sender,
+            group: isGroup ? from : null,
             content,
             mediaType,
             mediaPath,
-            sender,
-            group: message.key.remoteJid.endsWith('@g.us') ? message.key.remoteJid : null,
-            timestamp: new Date().toISOString()
+            rawMessage: msg,
+            timestamp: Date.now()
         });
-
-        // Anti-ViewOnce: forward immediately to owner if captured
-        if (isViewOnce && mediaType && fs.existsSync(mediaPath)) {
-            try {
-                const ownerNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-                const senderName = sender.split('@')[0];
-                const mediaOptions = {
-                    caption: `*Anti-ViewOnce ${mediaType}*
-From: @${senderName}`,
-                    mentions: [sender]
-                };
-                if (mediaType === 'image') {
-                    await sock.sendMessage(ownerNumber, { image: { url: mediaPath }, ...mediaOptions });
-                } else if (mediaType === 'video') {
-                    await sock.sendMessage(ownerNumber, { video: { url: mediaPath }, ...mediaOptions });
-                }
-                // Cleanup immediately for view-once forward
-                try { fs.unlinkSync(mediaPath); } catch {}
-            } catch (e) {
-                // ignore
-            }
-        }
-
     } catch (err) {
-        console.error('storeMessage error:', err);
+        console.error('Anti-delete storeMessage error:', err);
     }
 }
 
-// Handle message deletion
+/**
+ * Handles detection and restoration of revoked messages
+ */
 async function handleMessageRevocation(sock, revocationMessage) {
     try {
-        const config = loadAntideleteConfig();
+        const config = readConfig();
         if (!config.enabled) return;
 
-        const messageId = revocationMessage.message.protocolMessage.key.id;
-        const deletedBy = revocationMessage.participant || revocationMessage.key.participant || revocationMessage.key.remoteJid;
-        const ownerNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        const protocolMsg = revocationMessage.message?.protocolMessage;
+        if (!protocolMsg || protocolMsg.type !== 0) return;
 
-        if (deletedBy.includes(sock.user.id) || deletedBy === ownerNumber) return;
+        const messageId = protocolMsg.key?.id;
+        if (!messageId) return;
 
         const original = messageStore.get(messageId);
         if (!original) return;
 
+        const remoteJid = protocolMsg.key.remoteJid;
+        const deletedBy = revocationMessage.key.participant || revocationMessage.participant || remoteJid;
+        const botNumber = (sock.user?.id || '').split(':')[0] + '@s.whatsapp.net';
+
+        // Ignore if deleted by the bot itself
+        if (deletedBy.includes(botNumber.split('@')[0])) return;
+
         const sender = original.sender;
         const senderName = sender.split('@')[0];
-        const groupName = original.group ? (await sock.groupMetadata(original.group)).subject : '';
+        let groupName = '';
+
+        if (original.group) {
+            try {
+                const groupMetadata = await sock.groupMetadata(original.group);
+                groupName = groupMetadata.subject;
+            } catch (e) {
+                groupName = 'Group Chat';
+            }
+        }
 
         const time = new Date().toLocaleString('en-US', {
             timeZone: 'Asia/Kolkata',
@@ -232,50 +151,51 @@ async function handleMessageRevocation(sock, revocationMessage) {
         let text = `*🔰 ANTIDELETE REPORT 🔰*\n\n` +
             `*🗑️ Deleted By:* @${deletedBy.split('@')[0]}\n` +
             `*👤 Sender:* @${senderName}\n` +
-            `*📱 Number:* ${sender}\n` +
+            `*📱 Number:* +${sender.split('@')[0]}\n` +
             `*🕒 Time:* ${time}\n`;
 
         if (groupName) text += `*👥 Group:* ${groupName}\n`;
+        if (original.content) text += `\n*💬 Deleted Message:*\n${original.content}`;
 
-        if (original.content) {
-            text += `\n*💬 Deleted Message:*\n${original.content}`;
-        }
+        // Destination: send to current chat or owner's DM based on configuration
+        const targetJid = config.sendTo === 'owner' ? botNumber : remoteJid;
+        const mentions = [deletedBy, sender];
 
-        await sock.sendMessage(ownerNumber, {
+        // 1. Send Report Header
+        await sock.sendMessage(targetJid, {
             text,
-            mentions: [deletedBy, sender]
+            mentions
         });
 
-        // Media sending
-        if (original.mediaType && fs.existsSync(original.mediaPath)) {
+        // 2. Send Recovered Media
+        if (original.mediaType && original.mediaPath && fs.existsSync(original.mediaPath)) {
             const mediaOptions = {
-                caption: `*Deleted ${original.mediaType}*\nFrom: @${senderName}`,
+                caption: `*Deleted ${original.mediaType.toUpperCase()}*\nSender: @${senderName}`,
                 mentions: [sender]
             };
 
             try {
                 switch (original.mediaType) {
                     case 'image':
-                        await sock.sendMessage(ownerNumber, {
-                            image: { url: original.mediaPath },
-                            ...mediaOptions
-                        });
-                        break;
-                    case 'sticker':
-                        await sock.sendMessage(ownerNumber, {
-                            sticker: { url: original.mediaPath },
+                        await sock.sendMessage(targetJid, {
+                            image: fs.readFileSync(original.mediaPath),
                             ...mediaOptions
                         });
                         break;
                     case 'video':
-                        await sock.sendMessage(ownerNumber, {
-                            video: { url: original.mediaPath },
+                        await sock.sendMessage(targetJid, {
+                            video: fs.readFileSync(original.mediaPath),
                             ...mediaOptions
                         });
                         break;
+                    case 'sticker':
+                        await sock.sendMessage(targetJid, {
+                            sticker: fs.readFileSync(original.mediaPath)
+                        });
+                        break;
                     case 'audio':
-                        await sock.sendMessage(ownerNumber, {
-                            audio: { url: original.mediaPath },
+                        await sock.sendMessage(targetJid, {
+                            audio: fs.readFileSync(original.mediaPath),
                             mimetype: 'audio/mpeg',
                             ptt: false,
                             ...mediaOptions
@@ -283,27 +203,73 @@ async function handleMessageRevocation(sock, revocationMessage) {
                         break;
                 }
             } catch (err) {
-                await sock.sendMessage(ownerNumber, {
-                    text: `⚠️ Error sending media: ${err.message}`
-                });
+                console.error('Error re-sending media:', err);
             }
 
-            // Cleanup
+            // Cleanup local temp file
             try {
                 fs.unlinkSync(original.mediaPath);
-            } catch (err) {
-                console.error('Media cleanup error:', err);
-            }
+            } catch (err) {}
         }
 
         messageStore.delete(messageId);
-
     } catch (err) {
         console.error('handleMessageRevocation error:', err);
     }
 }
 
+/**
+ * Command Handler
+ */
+async function handleAntideleteCommand(sock, m, args) {
+    if (!m.isOwner && !m.isAdmin) {
+        return m.reply('❌ This command can only be used by Group Admins or the Bot Owner.');
+    }
+
+    const action = args[0]?.toLowerCase();
+    const config = readConfig();
+
+    if (action === 'on' || action === 'enable') {
+        config.enabled = true;
+        saveConfig(config);
+        return m.reply('✅ *Anti-Delete has been ENABLED.* Deleted messages will now be caught.');
+    } else if (action === 'off' || action === 'disable') {
+        config.enabled = false;
+        saveConfig(config);
+        return m.reply('❌ *Anti-Delete has been DISABLED.*');
+    } else if (action === 'to' || action === 'mode') {
+        const mode = args[1]?.toLowerCase();
+        if (mode === 'chat' || mode === 'group') {
+            config.sendTo = 'chat';
+            saveConfig(config);
+            return m.reply('✅ Recovered messages will now be sent to the **chat/group** where they were deleted.');
+        } else if (mode === 'owner' || mode === 'dm') {
+            config.sendTo = 'owner';
+            saveConfig(config);
+            return m.reply('✅ Recovered messages will now be forwarded to the **Owner DM**.');
+        } else {
+            return m.reply('⚠️ Use: `.antidelete to chat` or `.antidelete to owner`');
+        }
+    } else {
+        return m.reply(
+            `*───『 🔰 ANTIDELETE SETTINGS 🔰 』───*\n\n` +
+            `*• Status:* ${config.enabled ? '🟢 ENABLED' : '🔴 DISABLED'}\n` +
+            `*• Destination:* ${config.sendTo === 'owner' ? '👤 Owner DM' : '👥 Current Chat'}\n\n` +
+            `*Commands:*\n` +
+            `• \`.antidelete on\` - Activate anti-delete\n` +
+            `• \`.antidelete off\` - Deactivate anti-delete\n` +
+            `• \`.antidelete to chat\` - Restore deleted message in chat\n` +
+            `• \`.antidelete to owner\` - Forward deleted message to owner DM`
+        );
+    }
+}
+
 module.exports = {
+    name: 'antidelete',
+    alias: ['antidel', 'antirevoke'],
+    category: 'group',
+    desc: 'Capture and recover deleted messages',
+    execute: handleAntideleteCommand,
     handleAntideleteCommand,
     handleMessageRevocation,
     storeMessage
