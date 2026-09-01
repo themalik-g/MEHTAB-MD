@@ -71,8 +71,8 @@ async function helpCommand(sock, chatId, message) {
 ║ ➤ .mode <public/private>
 ║ ➤ .clearsession
 ║ ➤ .antidelete <on/off/to chat/to owner>
-║ ➤ .antiedit <on/off/to chat/to owner>
-║ ➤ .antiviewonce <on/off>
+║ ➤ .antiedit <g/p/jid/off> [scope]
+║ ➤ .antivv <g/p/jid/off> [scope]
 ║ ➤ .cleartmp
 ║ ➤ .update
 ║ ➤ .settings

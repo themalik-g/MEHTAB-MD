@@ -101,14 +101,14 @@ const unbanCommand = require('./commands/unban');
 const emojimixCommand = require('./commands/emojimix');
 const { handlePromotionEvent } = require('./commands/promote');
 const { handleDemotionEvent } = require('./commands/demote');
-const { viewonceCommand, antiViewOnceCommand, handleAutoViewOnce } = require('./commands/viewonce');
+const { viewonceCommand } = require('./commands/viewonce');
 const clearSessionCommand = require('./commands/clearsession');
 const { autoStatusCommand, handleStatusUpdate } = require('./commands/autostatus');
 const { simpCommand } = require('./commands/simp');
 const { stupidCommand } = require('./commands/stupid');
 const stickerTelegramCommand = require('./commands/stickertelegram');
 const textmakerCommand = require('./commands/textmaker');
-const { handleAntideleteCommand, handleAntieditCommand, handleMessageRevocation, storeMessage } = require('./commands/antidelete');
+const { handleAntideleteCommand, handleMessageRevocation, storeMessage } = require('./commands/antidelete');
 const clearTmpCommand = require('./commands/cleartmp');
 const setProfilePicture = require('./commands/setpp');
 const getppCommand = require('./commands/getpp');
@@ -142,6 +142,8 @@ const { anticallCommand, readState: readAnticallState } = require('./commands/an
 const { pmblockerCommand, readState: readPmBlockerState } = require('./commands/pmblocker');
 const settingsCommand = require('./commands/settings');
 const soraCommand = require('./commands/sora');
+const { antiVVCommand, handleAntiVV } = require('./commands/antivv');
+const { antiEditCommand, handleAntiEdit, storeMessageContent } = require('./commands/antiedit');
 
 // Global settings
 global.packname = settings.packname;
@@ -172,18 +174,23 @@ async function handleMessages(sock, messageUpdate, printLog) {
         // Handle autoread functionality
         await handleAutoread(sock, message);
 
-        // Auto Anti-ViewOnce interception
-        await handleAutoViewOnce(sock, message);
-
-        // Store message for antidelete & antiedit features
+        // Cache message for Anti Edit & Anti Delete features
         if (message.message) {
+            storeMessageContent(message);
             await storeMessage(sock, message);
+            await handleAntiVV(sock, message);
         }
 
-        // Handle message revocation / edits (Anti-Delete & Anti-Edit)
+        // Handle message revocation (Anti-Delete) and message editing (Anti-Edit)
         if (message.message?.protocolMessage) {
-            await handleMessageRevocation(sock, message);
-            return;
+            const protoType = message.message.protocolMessage.type;
+            if (protoType === 0 || protoType === 'REVOKE') {
+                await handleMessageRevocation(sock, message);
+                return;
+            } else if (protoType === 14 || protoType === 'MESSAGE_EDIT' || message.message.protocolMessage.editedMessage) {
+                await handleAntiEdit(sock, message);
+                return;
+            }
         }
 
         const chatId = message.key.remoteJid;
@@ -300,7 +307,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const adminCommands = ['.mute', '.unmute', '.ban', '.unban', '.promote', '.demote', '.kick', '.tagall', '.tagnotadmin', '.hidetag', '.antilink', '.antitag', '.setgdesc', '.setgname', '.setgpp'];
         const isAdminCommand = adminCommands.some(cmd => userMessage.startsWith(cmd));
 
-        const ownerCommands = ['.mode', '.autostatus', '.antidelete', '.antiedit', '.antiviewonce', '.antivv', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker'];
+        const ownerCommands = ['.mode', '.autostatus', '.antidelete', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.antivv', '.antiviewonce', '.antiedit'];
         const isOwnerCommand = ownerCommands.some(cmd => userMessage.startsWith(cmd));
 
         let isSenderAdmin = false;
@@ -774,10 +781,6 @@ async function handleMessages(sock, messageUpdate, printLog) {
             case userMessage === '.vv' || userMessage === '.viewonce':
                 await viewonceCommand(sock, chatId, message);
                 break;
-            case userMessage.startsWith('.antiviewonce') || userMessage.startsWith('.antivv'):
-                const antiVvArgs = userMessage.split(' ').slice(1);
-                await antiViewOnceCommand(sock, chatId, message, antiVvArgs);
-                break;
             case userMessage === '.clearsession' || userMessage === '.clearsesi':
                 await clearSessionCommand(sock, chatId, message);
                 break;
@@ -842,10 +845,6 @@ async function handleMessages(sock, messageUpdate, printLog) {
             case userMessage.startsWith('.antidelete') || userMessage.startsWith('.antidel'):
                 const antideleteMatch = userMessage.replace(/^\.(antidelete|antidel)/i, '').trim().split(/\s+/);
                 await handleAntideleteCommand(sock, chatId, message, antideleteMatch);
-                break;
-            case userMessage.startsWith('.antiedit'):
-                const antieditMatch = userMessage.replace(/^\.antiedit/i, '').trim().split(/\s+/);
-                await handleAntieditCommand(sock, chatId, message, antieditMatch);
                 break;
             case userMessage === '.surrender':
                 await handleTicTacToeMove(sock, chatId, senderId, 'surrender');
@@ -1120,6 +1119,18 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 break;
             case userMessage.startsWith('.sora'):
                 await soraCommand(sock, chatId, message);
+                break;
+            case userMessage.startsWith('.antivv') || userMessage.startsWith('.antiviewonce'):
+                {
+                    const rawArgs = (rawText || userMessage).replace(/^\.(antivv|antiviewonce)/i, '').trim();
+                    await antiVVCommand(sock, chatId, message, rawArgs);
+                }
+                break;
+            case userMessage.startsWith('.antiedit'):
+                {
+                    const rawArgs = (rawText || userMessage).replace(/^\.antiedit/i, '').trim();
+                    await antiEditCommand(sock, chatId, message, rawArgs);
+                }
                 break;
             default:
                 if (isGroup) {
