@@ -144,6 +144,11 @@ const settingsCommand = require('./commands/settings');
 const soraCommand = require('./commands/sora');
 const { antiVVCommand, handleAntiVV } = require('./commands/antivv');
 const { antiEditCommand, handleAntiEdit, storeMessageContent } = require('./commands/antiedit');
+const movieCommand = require('./commands/movie');
+const qrCommand = require('./commands/qr');
+const { alwaysOnlineCommand } = require('./commands/alwaysonline');
+const { getOnlineCommand } = require('./commands/getonline');
+const learnCommand = require('./commands/learn');
 
 // Global settings
 global.packname = settings.packname;
@@ -307,7 +312,7 @@ async function handleMessages(sock, messageUpdate, printLog) {
         const adminCommands = ['.mute', '.unmute', '.ban', '.unban', '.promote', '.demote', '.kick', '.tagall', '.tagnotadmin', '.hidetag', '.antilink', '.antitag', '.setgdesc', '.setgname', '.setgpp'];
         const isAdminCommand = adminCommands.some(cmd => userMessage.startsWith(cmd));
 
-        const ownerCommands = ['.mode', '.autostatus', '.antidelete', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.antivv', '.antiviewonce', '.antiedit'];
+        const ownerCommands = ['.mode', '.autostatus', '.antidelete', '.cleartmp', '.setpp', '.clearsession', '.areact', '.autoreact', '.autotyping', '.autoread', '.pmblocker', '.antivv', '.antiviewonce', '.antiedit', '.alwaysonline', '.always-online', '.getonline', '.get-online'];
         const isOwnerCommand = ownerCommands.some(cmd => userMessage.startsWith(cmd));
 
         let isSenderAdmin = false;
@@ -1130,6 +1135,33 @@ async function handleMessages(sock, messageUpdate, printLog) {
                 {
                     const rawArgs = (rawText || userMessage).replace(/^\.antiedit/i, '').trim();
                     await antiEditCommand(sock, chatId, message, rawArgs);
+                }
+                break;
+            case userMessage.startsWith('.movie') || userMessage.startsWith('.film'):
+                {
+                    const movieArgs = rawText.trim().split(/\s+/).slice(1);
+                    await movieCommand(sock, chatId, message, movieArgs);
+                }
+                break;
+            case userMessage.startsWith('.qr'):
+                {
+                    const qrArgs = rawText.trim().split(/\s+/).slice(1);
+                    await qrCommand(sock, chatId, message, qrArgs);
+                }
+                break;
+            case userMessage.startsWith('.alwaysonline') || userMessage.startsWith('.always-online'):
+                {
+                    const aoArgs = rawText.trim().split(/\s+/).slice(1);
+                    await alwaysOnlineCommand(sock, chatId, message, aoArgs);
+                }
+                break;
+            case userMessage.startsWith('.getonline') || userMessage.startsWith('.get-online'):
+                await getOnlineCommand(sock, chatId, message);
+                break;
+            case userMessage.startsWith('.learn'):
+                {
+                    const learnArgs = rawText.trim().split(/\s+/).slice(1);
+                    await learnCommand(sock, chatId, message, learnArgs);
                 }
                 break;
             default:

@@ -51,6 +51,7 @@ const store = require('./lib/lightweight_store')
 // Initialize store
 store.readFromFile()
 const settings = require('./settings')
+const { handlePresenceUpdate } = require('./commands/getonline')
 setInterval(() => store.writeToFile(), settings.storeWriteInterval || 10000)
 
 // Memory optimization - Force garbage collection if available
@@ -189,6 +190,12 @@ async function startXeonBotInc() {
         }
     })
 
+    XeonBotInc.ev.on('presence.update', (update) => {
+        try {
+            handlePresenceUpdate(update)
+        } catch (e) {}
+    })
+
     XeonBotInc.getName = (jid, withoutContact = false) => {
         id = XeonBotInc.decodeJid(jid)
         withoutContact = XeonBotInc.withoutContact || withoutContact
@@ -260,6 +267,22 @@ async function startXeonBotInc() {
         if (connection == "open") {
             console.log(chalk.magenta(` `))
             console.log(chalk.yellow(`🌿Connected to => ` + JSON.stringify(XeonBotInc.user, null, 2)))
+
+            // Always Online presence updater loop
+            const { isAlwaysOnlineEnabled } = require('./commands/alwaysonline');
+            if (global.alwaysOnlineInterval) clearInterval(global.alwaysOnlineInterval);
+            global.alwaysOnlineInterval = setInterval(async () => {
+                try {
+                    if (isAlwaysOnlineEnabled() && XeonBotInc?.user) {
+                        await XeonBotInc.sendPresenceUpdate('available');
+                    }
+                } catch (e) {}
+            }, 20000);
+            try {
+                if (isAlwaysOnlineEnabled()) {
+                    await XeonBotInc.sendPresenceUpdate('available');
+                }
+            } catch (e) {}
 
             try {
                 const botNumber = XeonBotInc.user.id.split(':')[0] + '@s.whatsapp.net';
