@@ -1,13 +1,15 @@
-const Jimp = require('jimp');
+const JimpModule = require('jimp');
+const Jimp = JimpModule.Jimp || JimpModule;
 const QRReader = require('qrcode-reader');
+const QRCode = require('qrcode');
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 
 async function qrCommand(sock, chatId, message, args) {
     try {
         const text = args.join(' ').trim();
         if (text) {
-            const qrImageUrl = `https://levanter.onrender.com/gqr?text=${encodeURIComponent(text)}`;
-            await sock.sendMessage(chatId, { image: { url: qrImageUrl } }, { quoted: message });
+            const qrBuffer = await QRCode.toBuffer(text, { width: 512, margin: 2 });
+            await sock.sendMessage(chatId, { image: qrBuffer, caption: `✅ QR code for:\n${text}` }, { quoted: message });
             return;
         }
 
