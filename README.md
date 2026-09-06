@@ -115,6 +115,86 @@ It is lightweight and can be easily customized to add more commands as per your 
     ```bash
     npm start
     ```
+---
+
+## One click vps deploy
+Open your vps and creat a file named as index.js and past the following raw data:
+```bash
+/**
+ * MEHTAB-MD - VPS Bootstrap (Levanter Style)
+ * Upload ONLY this file to /home/container/index.js
+ */
+
+const { spawnSync, spawn } = require('child_process')
+const { existsSync, rmSync } = require('fs')
+const path = require('path')
+
+const REPO_URL = 'https://github.com/themalik-g/MEHTAB-MD.git'
+const BOT_DIR = 'mehtab-md'
+
+let nodeRestartCount = 0
+const maxNodeRestarts = 5
+const restartWindow = 30000
+let lastRestartTime = Date.now()
+
+function startNode() {
+  const child = spawn('node', ['index.js'], { cwd: BOT_DIR, stdio: 'inherit' })
+  child.on('exit', (code) => {
+    if (code !== 0) {
+      const currentTime = Date.now()
+      if (currentTime - lastRestartTime > restartWindow) nodeRestartCount = 0
+      lastRestartTime = currentTime
+      nodeRestartCount++
+      if (nodeRestartCount > maxNodeRestarts) {
+        console.error('[BOOT] ❌ Bot crashing continuously. Stopping retries...')
+        return
+      }
+      console.log(`[BOOT] ⚠️ Bot exited (${code}). Restarting... (${nodeRestartCount}/${maxNodeRestarts})`)
+      startNode()
+    }
+  })
+}
+
+function installDependencies() {
+  console.log('[BOOT] 📥 Installing dependencies...')
+  const result = spawnSync('npm', ['install'], { cwd: BOT_DIR, stdio: 'inherit', timeout: 300000 })
+  if (result.error || result.status !== 0) {
+    console.error('[BOOT] ❌ npm install failed.')
+    process.exit(1)
+  }
+  console.log('[BOOT] ✅ Dependencies installed.')
+}
+
+function cloneRepository() {
+  console.log('[BOOT] 🌐 Cloning MEHTAB-MD from GitHub...')
+  const result = spawnSync('git', ['clone', '--depth', '1', REPO_URL, BOT_DIR], {
+    stdio: 'inherit',
+    timeout: 180000,
+  })
+  if (result.error || result.status !== 0) {
+    console.error('[BOOT] ❌ Git clone failed.')
+    process.exit(1)
+  }
+  console.log('[BOOT] ✅ Repository cloned.')
+  installDependencies()
+}
+
+if (!existsSync(BOT_DIR)) {
+  cloneRepository()
+} else if (!existsSync(path.join(BOT_DIR, 'package.json'))) {
+  console.log('[BOOT] ⚠️ Bot folder corrupted. Re-cloning...')
+  rmSync(BOT_DIR, { recursive: true, force: true })
+  cloneRepository()
+} else if (!existsSync(path.join(BOT_DIR, 'node_modules'))) {
+  installDependencies()
+} else {
+  console.log('[BOOT] 📁 Bot files found. Skipping download.')
+}
+
+console.log('[BOOT] 🚀 Starting MEHTAB-MD...\n')
+startNode()
+```
+Terminal will ask you to enter number and will display pairing code automatically
 
 ---
 
